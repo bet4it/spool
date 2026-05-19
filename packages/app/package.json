@@ -11,13 +11,16 @@
     "build:redact": "pnpm --filter @spool-lab/redact build",
     "build:share-kit": "pnpm --filter @spool/share-kit build",
     "build:deps": "pnpm run build:core && pnpm run build:redact && pnpm run build:share-kit",
-    "dev": "pnpm run build:deps && pnpm run rebuild:native && electron-vite dev",
+    "dev": "pnpm run build:deps && pnpm run rebuild:native && node scripts/dev.mjs",
+    "dev:reset-db": "node scripts/dev-reset-db.mjs",
+    "dev:seed-from-prod": "node scripts/dev-seed-from-prod.mjs",
     "build": "pnpm run build:deps && electron-vite build && electron-builder --publish never",
     "build:mac": "pnpm run build:deps && electron-vite build && electron-builder --mac --arm64",
     "build:linux": "pnpm run build:deps && electron-vite build && electron-builder --linux",
     "build:electron": "pnpm run build:deps && electron-vite build",
     "preview": "electron-vite preview",
     "clean": "rm -rf out dist-electron",
+    "test": "vitest run",
     "test:e2e": "pnpm run build:deps && pnpm run rebuild:native:electron && VITE_FEATURE_SHARE=1 electron-vite build && npx playwright test --config e2e/playwright.config.ts"
   },
   "dependencies": {
