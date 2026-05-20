@@ -23,10 +23,27 @@ export interface WorkerConfig {
   providers: readonly RedactProvider[]
   /** Profile string for `providers`. The worker rejects mismatched
    *  pairs (you can't claim profile = 'regex@3,pf@1.5b' with only
-   *  regexProvider in `providers`). */
-  currentProfile: string
+   *  regexProvider in `providers`).
+   *
+   *  Pass either a static string (test fixtures) or a thunk (prod —
+   *  lets the profile track pref changes like `kindAllowlist` so
+   *  toggling a kind triggers backfill via `listSessionsNeedingScan`
+   *  on the next call). The worker resolves the thunk on every read
+   *  rather than caching, so a pref save → SET_PREFS handler can
+   *  invalidate sessions and immediately see them as stale. */
+  currentProfile: string | (() => string)
   /** Names of providers active in this profile. */
   providerNames: readonly string[]
+  /** Live accessor for the kind-level allowlist. Read on every scan
+   *  (cheap — a Set lookup per match), so changing the preference
+   *  takes effect on the next rescan without restarting the worker. */
+  getKindAllowlist?: () => ReadonlySet<string>
+}
+
+function resolveProfile(config: WorkerConfig): string {
+  return typeof config.currentProfile === 'function'
+    ? config.currentProfile()
+    : config.currentProfile
 }
 
 export interface ScanWorker {
@@ -38,10 +55,15 @@ export interface ScanWorker {
   /** Enqueue every session whose scan_profile != currentProfile.
    *  Called once on boot. */
   backfill: () => Effect.Effect<number>
-  /** Stream of change events. Translator in main process subscribes
-   *  and forwards over IPC. */
+  /** Stream of finding change events. Translator in main process
+   *  subscribes and forwards over IPC. */
   changes: Stream.Stream<FindingsChange>
-  /** Current snapshot. UI polls via IPC. */
+  /** Stream of status updates — emitted on every queued / scanning /
+   *  backfillRemaining mutation. Lets the UI replace polling with a
+   *  push subscription. */
+  statusChanges: Stream.Stream<ScanStatus>
+  /** Current snapshot. UI uses this for the first read; subsequent
+   *  updates land via `statusChanges`. */
   getStatus: Effect.Effect<ScanStatus>
 }
 
@@ -53,18 +75,29 @@ export function makeScanWorker(
   return Effect.gen(function* () {
     const queue = yield* Queue.unbounded<number>()
     const events = yield* PubSub.unbounded<FindingsChange>()
+    const statusEvents = yield* PubSub.unbounded<ScanStatus>()
     const statusRef = yield* Ref.make<ScanStatus>({
       queued: 0,
       scanning: null,
       backfillRemaining: 0,
-      currentProfile: config.currentProfile,
+      currentProfile: resolveProfile(config),
     })
 
     const publish = (c: FindingsChange) => PubSub.publish(events, c).pipe(Effect.asVoid)
 
+    // Update statusRef AND publish the new snapshot so subscribers get
+    // a push event for every mutation. One helper at the seam avoids
+    // forgetting to publish from a future Ref.update site.
+    const updateStatus = (f: (s: ScanStatus) => ScanStatus) =>
+      Ref.update(statusRef, f).pipe(
+        Effect.zipRight(Ref.get(statusRef)),
+        Effect.flatMap((s) => PubSub.publish(statusEvents, s)),
+        Effect.asVoid,
+      )
+
     const scanOne = (sessionId: number) =>
       Effect.gen(function* () {
-        yield* Ref.update(statusRef, (s) => ({
+        yield* updateStatus((s) => ({
           ...s,
           scanning: sessionId,
           queued: Math.max(0, s.queued - 1),
@@ -72,9 +105,10 @@ export function makeScanWorker(
         const result: ScanResult | null = yield* scanSession(sessionId, {
           db: config.db,
           providers: config.providers,
-          currentProfile: config.currentProfile,
+          currentProfile: resolveProfile(config),
           providerNames: config.providerNames,
           publish,
+          ...(config.getKindAllowlist ? { kindAllowlist: config.getKindAllowlist() } : {}),
         }).pipe(
           Effect.catchAll((err) =>
             Effect.logError(`scanSession failed for ${sessionId}: ${err.reason}`, err).pipe(
@@ -82,7 +116,7 @@ export function makeScanWorker(
             ),
           ),
         )
-        yield* Ref.update(statusRef, (s) => ({
+        yield* updateStatus((s) => ({
           ...s,
           scanning: null,
           backfillRemaining: Math.max(0, s.backfillRemaining - 1),
@@ -114,20 +148,29 @@ export function makeScanWorker(
     const enqueue = (sessionId: number) =>
       Effect.gen(function* () {
         yield* Queue.offer(queue, sessionId)
-        yield* Ref.update(statusRef, (s) => ({ ...s, queued: s.queued + 1 }))
+        yield* updateStatus((s) => ({ ...s, queued: s.queued + 1 }))
       })
 
     const rescanAll = () =>
       Effect.gen(function* () {
-        // Cheap; better to do this outside a transaction so other
-        // queries can interleave during long catalogs.
+        // SELECT and UPDATE share one transaction so a concurrent sync
+        // that inserts a new session can't slip between them — the
+        // new row would otherwise miss the profile NULL pass AND be
+        // omitted from `all`, leaving it silently skipped by the
+        // drain fiber even though the user pressed "Rescan all". With
+        // a transaction the worker either sees every session present
+        // at the moment of the click, or sees the post-insert state
+        // (in which case the new session participates).
         const all = yield* Effect.sync(() =>
-          config.db.prepare('SELECT id FROM sessions ORDER BY started_at DESC').all() as Array<{ id: number }>,
+          config.db.transaction(() => {
+            const rows = config.db
+              .prepare('SELECT id FROM sessions ORDER BY started_at DESC')
+              .all() as Array<{ id: number }>
+            config.db.prepare('UPDATE sessions SET scan_profile = NULL').run()
+            return rows
+          })(),
         )
-        yield* Effect.sync(() =>
-          config.db.prepare('UPDATE sessions SET scan_profile = NULL').run(),
-        )
-        yield* Ref.update(statusRef, (s) => ({ ...s, backfillRemaining: all.length }))
+        yield* updateStatus((s) => ({ ...s, backfillRemaining: all.length }))
         for (const r of all) {
           yield* enqueue(r.id)
         }
@@ -136,10 +179,15 @@ export function makeScanWorker(
 
     const backfill = () =>
       Effect.gen(function* () {
+        // Re-resolve the profile each call so a SET_PREFS handler that
+        // changed kindAllowlist sees the updated hash before invoking
+        // backfill. Keep the per-call status snapshot in sync too.
+        const profile = resolveProfile(config)
+        yield* updateStatus((s) => ({ ...s, currentProfile: profile }))
         const stale = yield* Effect.sync(() =>
-          listSessionsNeedingScan(config.db, config.currentProfile),
+          listSessionsNeedingScan(config.db, profile),
         )
-        yield* Ref.update(statusRef, (s) => ({ ...s, backfillRemaining: stale.length }))
+        yield* updateStatus((s) => ({ ...s, backfillRemaining: stale.length }))
         for (const id of stale) {
           yield* enqueue(id)
         }
@@ -151,6 +199,7 @@ export function makeScanWorker(
       rescanAll,
       backfill,
       changes: Stream.fromPubSub(events),
+      statusChanges: Stream.fromPubSub(statusEvents),
       getStatus: Ref.get(statusRef),
     } satisfies ScanWorker
   })

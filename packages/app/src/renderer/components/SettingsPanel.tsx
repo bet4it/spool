@@ -8,12 +8,14 @@ import { getSessionSourceColor, getSessionSourceLabel } from '../../shared/sessi
 import { useHotkeys } from '../hooks/useHotkeys.js'
 import Menu from './Menu.js'
 import ShortcutsTab from './ShortcutsTab.js'
+import SecurityPane from './Settings/SecurityPane.js'
+import { securityFeatureEnabled } from '../featureFlags.js'
 import LabsTab from './LabsTab.js'
 import Toggle from './Toggle.js'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'sources' | 'agent' | 'labs'
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'sources' | 'agent' | 'labs' | 'security'
 
 /** Must match SUPPORTED_TERMINALS in main/terminal.ts */
 const TERMINAL_VALUES = ['', 'Terminal', 'iTerm2', 'Warp', 'kitty', 'Alacritty', 'WezTerm'] as const
@@ -34,7 +36,7 @@ type Theme = 'system' | 'light' | 'dark'
 
 // ── Sidebar tabs ───────────────────────────────────────────────────────────
 
-const TAB_DEFS: { id: SettingsTab; labelKey: 'settings.tab_general' | 'settings.tab_appearance' | 'settings.tab_shortcuts' | 'settings.tab_sources' | 'settings.tab_agent' | 'settings.tab_labs'; icon: ReactNode }[] = [
+const TAB_DEFS: { id: SettingsTab; labelKey: 'settings.tab_general' | 'settings.tab_appearance' | 'settings.tab_shortcuts' | 'settings.tab_sources' | 'settings.tab_agent' | 'settings.tab_labs' | 'settings.tab_security'; icon: ReactNode }[] = [
   {
     id: 'general',
     labelKey: 'settings.tab_general',
@@ -105,6 +107,17 @@ const TAB_DEFS: { id: SettingsTab; labelKey: 'settings.tab_general' | 'settings.
       </svg>
     ),
   },
+  {
+    id: 'security',
+    labelKey: 'settings.tab_security',
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2l8 4v6c0 5-4 9-8 10-4-1-8-5-8-10V6l8-4z"/>
+        <path d="M12 8v4"/>
+        <path d="M12 16h.01"/>
+      </svg>
+    ),
+  },
 ]
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -138,7 +151,7 @@ export default function SettingsPanel({
             <h2 className="text-sm font-semibold text-warm-text dark:text-dark-text">{t('settings.title')}</h2>
           </div>
           <div className="px-2 space-y-0.5">
-            {TAB_DEFS.map(def => (
+            {TAB_DEFS.filter(def => def.id !== 'security' || securityFeatureEnabled()).map(def => (
               <button
                 key={def.id}
                 type="button"
@@ -195,6 +208,7 @@ export default function SettingsPanel({
             {tab === 'sources' && <SourcesTab claudeCount={claudeCount} codexCount={codexCount} geminiCount={geminiCount} />}
             {tab === 'agent' && <AgentTab />}
             {tab === 'labs' && <LabsTab />}
+            {tab === 'security' && securityFeatureEnabled() && <SecurityPane />}
           </div>
         </div>
       </div>

@@ -12,7 +12,7 @@
 
 import type Database from 'better-sqlite3'
 import type { SensitiveKind } from '@spool-lab/redact'
-import { HIGH_SEVERITY_KINDS, INFO_SEVERITY_KINDS } from '@spool-lab/redact'
+import { HIGH_SEVERITY_KINDS, INFO_SEVERITY_KINDS, severityOf } from '@spool-lab/redact'
 import type {
   FindingRow,
   FindingState,
@@ -116,10 +116,26 @@ export function insertFindings(db: Database.Database, rows: readonly FindingInpu
   }
 }
 
-/** Delete only state='active' rows for the providers being rescanned.
- *  Dismissed and purged rows survive — they are the user's decisions
- *  and the audit trail. */
-export function deleteActiveFindings(
+/** Delete all non-purged rows for the providers being rescanned —
+ *  i.e. wipe the producer's previous output so the upcoming
+ *  `insertFindings` is the canonical truth.
+ *
+ *  Includes `state='dismissed'` deliberately: those rows are derived
+ *  state. The user's "ignore" decisions live in `allowlist_session`
+ *  and `allowlist_global` (preserved here), and the scan path
+ *  re-emits findings as `state='dismissed'` whenever it encounters a
+ *  hit that matches an allowlist row. Re-inserting also keeps
+ *  `findings.value_hash` aligned with the per-kind allowlist
+ *  preference (security.json `kindAllowlist`) — without this delete,
+ *  a mute → unmute cycle would accumulate phantom dismissed rows
+ *  (one set per cycle), inflating audit counts and breaking
+ *  `riskByCategory` totals over time.
+ *
+ *  Purged rows are the only state that's NOT producer-derived —
+ *  they correspond to destructive `messages.content_text` rewrites
+ *  the user explicitly approved. Preserving them is the audit
+ *  contract documented in the design doc. */
+export function deleteRefreshableFindings(
   db: Database.Database,
   sessionId: number,
   providers: readonly string[],
@@ -129,10 +145,16 @@ export function deleteActiveFindings(
   db.prepare(
     `DELETE FROM findings
      WHERE session_id = ?
-       AND state = 'active'
+       AND state IN ('active','dismissed')
        AND provider IN (${placeholders})`,
   ).run(sessionId, ...providers)
 }
+
+/** @deprecated Renamed to {@link deleteRefreshableFindings} after the
+ *  active-only filter was found to leak phantom dismissed rows
+ *  across mute→unmute cycles. Kept as a thin alias so callers
+ *  outside the repo don't break mid-stack. */
+export const deleteActiveFindings = deleteRefreshableFindings
 
 // ─── Counts (denormalised on sessions) ────────────────────────────
 
@@ -381,16 +403,19 @@ export function listSessionsWithFindings(
  *  Drives the Watchtower-style panel on the Security page. */
 export function riskByCategory(db: Database.Database): RiskByCategoryRow[] {
   const rows = db.prepare(
-    `SELECT kind, COUNT(*) AS count
+    `SELECT kind,
+            COUNT(*) AS count,
+            COUNT(DISTINCT session_id) AS sessions
        FROM findings
       WHERE state = 'active'
       GROUP BY kind
       ORDER BY count DESC`,
-  ).all() as Array<{ kind: string; count: number }>
+  ).all() as Array<{ kind: string; count: number; sessions: number }>
   return rows.map(r => ({
     kind: r.kind as SensitiveKind,
-    severity: HIGH_SEVERITY_KINDS.has(r.kind as SensitiveKind) ? 'high' : 'low',
+    severity: severityOf(r.kind as SensitiveKind),
     count: r.count,
+    sessions: r.sessions,
   }))
 }
 

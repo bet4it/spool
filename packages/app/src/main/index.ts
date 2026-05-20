@@ -39,6 +39,7 @@ import {
 import { Effect, Scope, Exit } from 'effect'
 import { regexProvider } from '@spool-lab/redact'
 import { registerSecurityIpc } from './ipc/security.js'
+import { loadSecurityPreferences } from './securityPreferences.js'
 import type {
   FragmentResult, SessionSource, ListSessionsByIdentityOptions, SessionsCursor,
   ShareDraftRow, UpsertShareDraftInput,
@@ -144,11 +145,11 @@ const searchCache = new SearchCache()
  *  `../renderer/featureFlags`) because main code mustn't import
  *  React-side modules: those pull in the whole renderer dep graph.
  *
- *  When this returns `false`, the scan worker stays un-booted on
- *  production user machines. The DB migrations still run
- *  unconditionally — schema must be forward-compatible so that
- *  flipping the flag on later doesn't require a second upgrade
- *  pass. */
+ *  When this returns `false`, the scan worker and IPC handlers
+ *  stay un-booted on production user machines. The DB migrations
+ *  still run unconditionally — schema must be forward-compatible
+ *  so that flipping the flag on later doesn't require a second
+ *  upgrade pass. */
 function securityFeatureEnabled(): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env = (import.meta as any).env as { DEV?: boolean; VITE_FEATURE_SECURITY?: string } | undefined
@@ -165,8 +166,18 @@ async function bootScanWorker(): Promise<void> {
         makeScanWorker({
           db,
           providers: [regexProvider],
-          currentProfile: currentProfileString(),
+          // Recompute the profile string on every read so a pref save
+          // (kindAllowlist change) immediately marks every session
+          // whose `scan_profile` no longer matches as stale —
+          // `worker.backfill()` then enqueues them on its next call.
+          currentProfile: () => currentProfileString({
+            kindAllowlist: loadSecurityPreferences().kindAllowlist,
+          }),
           providerNames: ['regex'],
+          // Read the persisted kind allowlist on every scan so the
+          // Settings → Security pane's multi-select takes effect on
+          // the next session without a worker restart.
+          getKindAllowlist: () => new Set(loadSecurityPreferences().kindAllowlist),
         }),
         Scope.Scope,
         scope,
@@ -318,9 +329,19 @@ app.whenReady().then(async () => {
   syncer = new Syncer(db, undefined, (sessionId) => {
     // Sync mutated this session's messages; existing findings now have
     // stale offsets. The Syncer already nulled scan_profile inside the
-    // commit txn; here we just re-enqueue so the worker picks it up.
+    // commit txn; here we just re-enqueue so the worker picks it up —
+    // unless the user opted out of auto-rescan in Settings → Security,
+    // in which case we leave scan_profile dirty for the next manual
+    // Rescan all click.
+    // `invalidateSessionScanProfile` updates the v12 `scan_profile`
+    // column regardless of the feature flag — the column lives in
+    // every user's schema. Re-enqueuing only runs when the worker
+    // is booted (i.e. the flag is on); the column resets either
+    // way, which keeps state consistent if the flag flips on later.
     invalidateSessionScanProfile(db, sessionId)
-    if (scanWorker) Effect.runFork(scanWorker.enqueue(sessionId))
+    if (scanWorker && loadSecurityPreferences().rescanAfterSync === 'auto') {
+      Effect.runFork(scanWorker.enqueue(sessionId))
+    }
   })
   watcher = new SpoolWatcher(syncer)
   watcher.on('new-sessions', (_event, data) => {

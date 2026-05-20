@@ -34,7 +34,7 @@ import { loadThemeEditorState, saveThemeEditorState } from './theme/persist.js'
 import { useHotkeys } from './hooks/useHotkeys.js'
 import { useLanguageBootstrap } from './i18n/useLanguageBootstrap.js'
 import type { LanguagePreference } from '../preload/index.js'
-import { useFeature } from './featureFlags.js'
+import { useFeature, securityFeatureEnabled } from './featureFlags.js'
 
 type View = 'search' | 'session' | 'shares' | 'share-editor' | 'security'
 type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'sources' | 'agent' | 'labs'
@@ -62,6 +62,9 @@ export default function App() {
   const [results, setResults] = useState<SearchResult[]>([])
   const [previewSuggestions, setPreviewSuggestions] = useState<SearchResult[]>([])
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
+  // Cached total of active high-severity findings across the archive.
+  // Drives the trailing badge on the Sidebar's Security row.
+  const [securityHighCount, setSecurityHighCount] = useState(0)
   const [targetMessageId, setTargetMessageId] = useState<number | null>(null)
   const [view, setView] = useState<View>('search')
   const [homeMode, setHomeMode] = useState(true)
@@ -306,7 +309,11 @@ export default function App() {
   const showSearchResults = view === 'search' && !selectedSession && !!query.trim()
   const isHomeMode = homeMode && view === 'search' && !selectedSession && !showProjectView && !showSearchResults
   const isSharesView = shareEnabled && view === 'shares'
-  const isSecurityView = view === 'security'
+  // Mirrors `isSharesView`'s shareEnabled gate — defense in depth so
+  // a stale `view='security'` from persisted state (or a future
+  // deep link) can't surface the Security page when the feature
+  // flag is off in production.
+  const isSecurityView = securityFeatureEnabled() && view === 'security'
   const isShareEditorView = shareEnabled && view === 'share-editor'
 
   // Bounce out of share-only views when the user disables the flag from
@@ -337,6 +344,42 @@ export default function App() {
       .finally(() => {
         themeHydrated.current = true
       })
+  }, [])
+
+  // Keep the sidebar Security badge synced with the worker. Computes a
+  // simple total of active high-severity findings from riskByCategory
+  // and re-runs on every findings-change event the IPC fires.
+  useEffect(() => {
+    let active = true
+    let off: (() => void) | null = null
+    const HIGH = new Set([
+      'private-key', 'ssh-key', 'cloud-cred-ini', 'kubeconfig-token', 'netrc',
+      'connection-string', 'url-creds', 'api-key', 'jwt', 'bearer',
+      'basic-auth', 'env-var', 'generic-secret',
+    ])
+    const recompute = async () => {
+      try {
+        const mod = await import('./api/security.js')
+        const rows = await mod.securityApi.riskByCategory()
+        if (!active) return
+        const total = rows.reduce(
+          (acc, r) => acc + (HIGH.has(r.kind) ? r.count : 0),
+          0,
+        )
+        setSecurityHighCount(total)
+      } catch {
+        if (active) setSecurityHighCount(0)
+      }
+    }
+    void recompute()
+    void import('./api/security.js').then((mod) => {
+      if (!active) return
+      off = mod.securityApi.onChange(() => { void recompute() })
+    }).catch(() => {})
+    return () => {
+      active = false
+      if (off) off()
+    }
   }, [])
 
   useEffect(() => {
@@ -620,17 +663,24 @@ export default function App() {
     setView('session')
   }, [])
 
+  // Captures whichever surface launched the session view, so the
+  // detail header's Back button returns to it (Security / Shares /
+  // Search results) instead of always dumping into the empty
+  // search-results state.
+  const [sessionReturnView, setSessionReturnView] = useState<View>('search')
+
   const handleOpenSession = useCallback((uuid: string, messageId?: number) => {
+    setSessionReturnView(view === 'session' ? sessionReturnView : view)
     setSelectedSession(uuid)
     setTargetMessageId(messageId ?? null)
     setView('session')
-  }, [])
+  }, [view, sessionReturnView])
 
   const handleBack = useCallback(() => {
-    setView('search')
+    setView(sessionReturnView)
     setSelectedSession(null)
     setTargetMessageId(null)
-  }, [])
+  }, [sessionReturnView])
 
   const handleClearResults = useCallback(() => {
     setQuery('')
@@ -773,6 +823,7 @@ export default function App() {
         setQuery('')
       }}
       isSecurityActive={isSecurityView}
+      securityHighCount={securityHighCount}
       onOpenSearch={handleSearchOpen}
       syncStatus={syncStatus}
       status={status}
@@ -922,7 +973,10 @@ export default function App() {
             {...(shareEnabled ? { onStartNewDraft: handleStartShareFromUuid } : {})}
           />
         ) : isSecurityView ? (
-          <SecurityPage onOpenSession={handleOpenSession} />
+          <SecurityPage
+            onOpenSession={handleOpenSession}
+            {...(shareEnabled ? { onShareSession: handleStartShareFromUuid } : {})}
+          />
         ) : isHomeMode ? (
           <LibraryLanding
             onSelectProject={(key) => {

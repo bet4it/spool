@@ -7,6 +7,7 @@ import MessageList, { type MessageListHandle } from './MessageList.js'
 import SessionFindBar from './SessionFindBar.js'
 import FindingsStrip from './security/FindingsStrip.js'
 import { securityFeatureEnabled } from '../featureFlags.js'
+import { securityApi } from '../api/security.js'
 import PinButton from './PinButton.js'
 import Menu from './Menu.js'
 import { getSessionResumeCommand } from '../../shared/resumeCommand.js'
@@ -116,6 +117,34 @@ export default function SessionDetail({ sessionUuid, targetMessageId, onCopySess
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [sessionUuid])
+
+  // Re-fetch the session record on security mutations so the
+  // meta-row pill (which reads session.scanFindingCount /
+  // scanHighCount / scanPurgedCount / scanCompletedAt) flips to
+  // its "cleared ✓" state immediately after a Purge all, rather
+  // than staying stuck on the pre-purge counts until the user
+  // navigates away and back. Debounced because a Purge all of
+  // N findings publishes N events.
+  useEffect(() => {
+    if (!securityFeatureEnabled()) return
+    const sessionId = session?.id
+    if (sessionId === undefined) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = securityApi.onChange((c) => {
+      if (c.sessionId !== sessionId) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        window.spool.getSession(sessionUuid).then((result) => {
+          if (result) setSession(result.session)
+        }).catch(() => {})
+      }, 300)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [sessionUuid, session?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -397,6 +426,13 @@ function RiskPill({
   const total = session.scanFindingCount ?? 0
   const purged = session.scanPurgedCount ?? 0
   const completed = session.scanCompletedAt != null
+
+  // Defensive: if the session has no visible messages, suppress the
+  // pill. Stale findings can land on sessions whose user/assistant
+  // messages were stripped (sidechain-only state, file rewrite) and
+  // there's no useful action the user can take from this surface
+  // when the body is empty.
+  if ((session.messageCount ?? 0) === 0) return null
 
   // Three pill states:
   //   active   — has findings; click drops the strip in

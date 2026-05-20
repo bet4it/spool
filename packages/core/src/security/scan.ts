@@ -16,7 +16,7 @@ import type Database from 'better-sqlite3'
 import type { SensitiveMatch, RedactProvider } from '@spool-lab/redact'
 import { hashValueForRedactExclude } from '@spool-lab/redact'
 import {
-  deleteActiveFindings,
+  deleteRefreshableFindings,
   insertFindings,
   setSessionScanProfile,
   updateSessionCounts,
@@ -63,6 +63,11 @@ export interface ScanSessionDeps {
   /** Sink for change notifications. The worker layer wraps PubSub
    *  here; tests pass a simple collector. */
   publish: (change: FindingsChange) => Effect.Effect<void>
+  /** Kind-level allowlist. Findings whose kind is in this set get
+   *  inserted with state='dismissed' (instead of 'active') without
+   *  needing a per-value allowlist row. Driven by the Settings →
+   *  Security pane's multi-select. */
+  kindAllowlist?: ReadonlySet<string>
 }
 
 /** Scan one session end to end. Idempotent: running twice produces
@@ -130,14 +135,16 @@ export function scanSession(
       provider: m.provider,
       startOffset: m.start,
       endOffset: m.end,
-      state: isAllowlisted(allow, m.kind, m.valueHash) ? 'dismissed' : 'active',
+      state: (deps.kindAllowlist?.has(m.kind) || isAllowlisted(allow, m.kind, m.valueHash))
+        ? 'dismissed'
+        : 'active',
     }))
 
     // 5. Apply atomically.
     yield* Effect.try({
       try: () => {
         deps.db.transaction(() => {
-          deleteActiveFindings(deps.db, sessionId, deps.providerNames)
+          deleteRefreshableFindings(deps.db, sessionId, deps.providerNames)
           insertFindings(deps.db, inputs)
           setSessionScanProfile(deps.db, sessionId, deps.currentProfile, new Date().toISOString())
           updateSessionCounts(deps.db, sessionId)
@@ -156,7 +163,7 @@ function applyEmpty(sessionId: number, deps: ScanSessionDeps): Effect.Effect<voi
   return Effect.try({
     try: () => {
       deps.db.transaction(() => {
-        deleteActiveFindings(deps.db, sessionId, deps.providerNames)
+        deleteRefreshableFindings(deps.db, sessionId, deps.providerNames)
         setSessionScanProfile(deps.db, sessionId, deps.currentProfile, new Date().toISOString())
         updateSessionCounts(deps.db, sessionId)
       })()
