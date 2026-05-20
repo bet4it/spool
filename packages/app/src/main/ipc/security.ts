@@ -12,6 +12,9 @@ import {
   listSessionsWithFindings,
   riskByCategory,
   getFindingValue,
+  getFindingValues,
+  dismissFinding,
+  undismissFinding,
   type FindingFilter,
   type SessionFindingFilter,
   type ScanWorker,
@@ -26,7 +29,14 @@ export const SECURITY_IPC_CHANNELS = {
   LIST_SESSIONS_WITH_FINDINGS: 'security:list-sessions-with-findings',
   RISK_BY_CATEGORY:            'security:risk-by-category',
   GET_FINDING_VALUE:           'security:get-finding-value',
+  GET_FINDING_VALUES:          'security:get-finding-values',
   GET_SCAN_STATUS:             'security:get-scan-status',
+
+  // mutations
+  DISMISS_FINDING:             'security:dismiss-finding',
+  UNDISMISS_FINDING:           'security:undismiss-finding',
+  RESCAN_ALL:                  'security:rescan-all',
+  RESCAN_SESSION:              'security:rescan-session',
 
   // events (push: main → renderer via webContents.send)
   EVT_FINDINGS_CHANGED:        'security:evt-findings-changed',
@@ -61,8 +71,32 @@ export function registerSecurityIpc(deps: SecurityIpcDeps): () => void {
   ipcMain.handle(SECURITY_IPC_CHANNELS.GET_FINDING_VALUE, (_e, findingId: number) =>
     getFindingValue(db, findingId),
   )
+  ipcMain.handle(SECURITY_IPC_CHANNELS.GET_FINDING_VALUES, (_e, ids: number[]) =>
+    getFindingValues(db, ids),
+  )
   ipcMain.handle(SECURITY_IPC_CHANNELS.GET_SCAN_STATUS, () =>
     runPromise(worker.getStatus),
+  )
+
+  ipcMain.handle(
+    SECURITY_IPC_CHANNELS.DISMISS_FINDING,
+    (_e, args: { findingId: number; scope: 'session' | 'global' }) => {
+      dismissFinding(db, args.findingId, args.scope)
+      return { ok: true }
+    },
+  )
+  ipcMain.handle(
+    SECURITY_IPC_CHANNELS.UNDISMISS_FINDING,
+    (_e, args: { findingId: number }) => {
+      undismissFinding(db, args.findingId)
+      return { ok: true }
+    },
+  )
+  ipcMain.handle(SECURITY_IPC_CHANNELS.RESCAN_ALL, () =>
+    runPromise(worker.rescanAll()).then((count) => ({ count })),
+  )
+  ipcMain.handle(SECURITY_IPC_CHANNELS.RESCAN_SESSION, (_e, sessionId: number) =>
+    runPromise(worker.enqueue(sessionId)).then(() => ({ ok: true })),
   )
 
   // Forward worker change events to the renderer. The subscriber runs
