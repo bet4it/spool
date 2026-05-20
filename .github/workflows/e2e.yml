@@ -3,14 +3,27 @@ name: E2E Tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "packages/landing/**"
+      - "videos/**"
+      - "**/*.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "packages/landing/**"
+      - "videos/**"
+      - "**/*.md"
+      - "docs/**"
 
 jobs:
   unit:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS unit coverage is redundant with Ubuntu — unit tests have no
+        # Electron / native-window surface, and macOS e2e still runs on PRs.
+        # Skip macOS unit on PRs; keep it on push to main as a safety net.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -49,18 +62,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build redact (core depends on it)
-        run: pnpm --filter @spool-lab/redact build
-
-      - name: Build core
-        run: pnpm --filter @spool-lab/core build
-
-      - name: Rebuild native modules for Electron
-        run: cd packages/app && npx @electron/rebuild -f -w better-sqlite3
-
-      - name: Build Electron app
-        run: pnpm --filter @spool/app build:electron
 
       - name: Run E2E tests (Linux)
         if: runner.os == 'Linux'
