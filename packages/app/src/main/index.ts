@@ -33,7 +33,12 @@ import {
   pinSession, unpinSession, getPinnedUuids, listPinnedSessions,
   listProjectGroups, listSessionsByIdentity, listPinnedSessionsByIdentity, listProjectDirectoryCounts,
   listShareDrafts, getShareDraft, upsertShareDraft, deleteShareDraft, countDraftsBySession,
+  makeScanWorker, currentProfileString, invalidateSessionScanProfile,
+  type ScanWorker,
 } from '@spool-lab/core'
+import { Effect, Scope, Exit } from 'effect'
+import { regexProvider } from '@spool-lab/redact'
+import { registerSecurityIpc } from './ipc/security.js'
 import type {
   FragmentResult, SessionSource, ListSessionsByIdentityOptions, SessionsCursor,
   ShareDraftRow, UpsertShareDraftInput,
@@ -86,6 +91,9 @@ let syncer: Syncer
 let watcher: SpoolWatcher
 let acpManager: AcpManager
 let isSyncActive = false
+let scanWorker: ScanWorker | null = null
+let scanWorkerScope: Scope.CloseableScope | null = null
+let disposeSecurityIpc: (() => void) | null = null
 
 type CachedSearchValue = FragmentResult[]
 
@@ -123,6 +131,67 @@ class SearchCache {
 }
 
 const searchCache = new SearchCache()
+
+/** Main-process mirror of the renderer's `securityFeatureEnabled()`.
+ *
+ *  The renderer reads `import.meta.env.DEV` and
+ *  `import.meta.env.VITE_FEATURE_SECURITY` (Vite inlines both at
+ *  build time). Electron's main process bundle can read the same
+ *  values — `electron-vite build` substitutes them just like for
+ *  the renderer.
+ *
+ *  Kept inline here (rather than imported from
+ *  `../renderer/featureFlags`) because main code mustn't import
+ *  React-side modules: those pull in the whole renderer dep graph.
+ *
+ *  When this returns `false`, the scan worker stays un-booted on
+ *  production user machines. The DB migrations still run
+ *  unconditionally — schema must be forward-compatible so that
+ *  flipping the flag on later doesn't require a second upgrade
+ *  pass. */
+function securityFeatureEnabled(): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const env = (import.meta as any).env as { DEV?: boolean; VITE_FEATURE_SECURITY?: string } | undefined
+  if (env?.DEV) return true
+  return env?.VITE_FEATURE_SECURITY === '1'
+}
+
+async function bootScanWorker(): Promise<void> {
+  try {
+    const scope = await Effect.runPromise(Scope.make())
+    scanWorkerScope = scope
+    const worker = await Effect.runPromise(
+      Effect.provideService(
+        makeScanWorker({
+          db,
+          providers: [regexProvider],
+          currentProfile: currentProfileString(),
+          providerNames: ['regex'],
+        }),
+        Scope.Scope,
+        scope,
+      ),
+    )
+    scanWorker = worker
+  } catch (err) {
+    console.error('[security] scan worker failed to boot:', err)
+    scanWorker = null
+  }
+}
+
+async function shutdownScanWorker(): Promise<void> {
+  if (disposeSecurityIpc) {
+    try { disposeSecurityIpc() } catch { /* best effort */ }
+    disposeSecurityIpc = null
+  }
+  if (scanWorkerScope) {
+    try {
+      await Effect.runPromise(Scope.close(scanWorkerScope, Exit.void))
+    } catch { /* best effort */ }
+    scanWorkerScope = null
+    scanWorker = null
+  }
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -245,7 +314,14 @@ app.whenReady().then(async () => {
 
   db = getDB()
   acpManager = new AcpManager()
-  syncer = new Syncer(db)
+
+  syncer = new Syncer(db, undefined, (sessionId) => {
+    // Sync mutated this session's messages; existing findings now have
+    // stale offsets. The Syncer already nulled scan_profile inside the
+    // commit txn; here we just re-enqueue so the worker picks it up.
+    invalidateSessionScanProfile(db, sessionId)
+    if (scanWorker) Effect.runFork(scanWorker.enqueue(sessionId))
+  })
   watcher = new SpoolWatcher(syncer)
   watcher.on('new-sessions', (_event, data) => {
     searchCache.clear()
@@ -256,13 +332,49 @@ app.whenReady().then(async () => {
   })
 
   // Initial sync in worker thread (non-blocking)
-  runSyncWorker().then(() => {
+  runSyncWorker().then((result) => {
     watcher.start()
+    // Sessions were inserted by the worker thread which has its own
+    // DB handle, so the renderer never got an onNewSessions push for
+    // them. Without an explicit signal here, any view that listed
+    // sessions BEFORE sync finished would stay empty until the next
+    // file-watcher event. Emit new-sessions so LibraryLanding /
+    // ProjectView refetch — same code path that already handles
+    // post-startup inserts.
+    if (result.added > 0) {
+      mainWindow?.webContents.send('spool:new-sessions', { count: result.added })
+    }
+    // Sessions were inserted by the worker thread which has its own DB
+    // handle — no onSessionChanged callbacks reached this process. Kick
+    // off a backfill round now that the sessions table is populated.
+    if (scanWorker) Effect.runFork(scanWorker.backfill())
   }).catch((err) => {
     console.error('[sync-worker] failed:', err)
   })
 
   mainWindow = createWindow()
+
+  // Boot the Security Scan worker AFTER createWindow so the renderer
+  // mount + initial sync don't wait on it. The Syncer's
+  // onSessionChanged callback and the post-sync backfill are both
+  // guarded by `if (scanWorker)`, so any session changes that fire
+  // before the worker is ready are no-ops — `scanWorker.backfill()`
+  // below catches up once boot completes.
+  //
+  // Gated by VITE_FEATURE_SECURITY so production builds (where the
+  // env var stays unset) never start the scanner.
+  if (securityFeatureEnabled()) {
+    void bootScanWorker().then(() => {
+      if (!scanWorker) return
+      disposeSecurityIpc = registerSecurityIpc({
+        db,
+        worker: scanWorker,
+        runPromise: <A, E>(eff: Effect.Effect<A, E>) => Effect.runPromise(eff as unknown as Effect.Effect<A>),
+        getMainWindow: () => mainWindow,
+      })
+      Effect.runFork(scanWorker.backfill())
+    })
+  }
 
   // Auto-updater (only runs in packaged builds)
   setupAutoUpdater(() => mainWindow)
@@ -303,6 +415,17 @@ app.on('window-all-closed', () => {
   }
   // On macOS, keep app running in tray
   app.dock?.hide()
+})
+
+app.on('before-quit', (event) => {
+  // Tear down the scan worker scope (interrupts the drain fiber) before
+  // Electron releases the database.
+  if (scanWorkerScope) {
+    event.preventDefault()
+    shutdownScanWorker()
+      .catch((err) => { console.error('[security] shutdown failed:', err) })
+      .finally(() => { app.exit(0) })
+  }
 })
 
 // ── IPC Handlers ──────────────────────────────────────────────────────────────

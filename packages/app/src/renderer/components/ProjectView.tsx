@@ -8,6 +8,8 @@ import { insertSessionSorted } from '../../shared/sessionSort.js'
 import { getSessionSourceColor, getSessionSourceLabel } from '../../shared/sessionSources.js'
 import { formatRelativeDate } from '../../shared/formatDate.js'
 import { PROJECT_SORT_OPTIONS } from '../../shared/projectView.js'
+import { securityFeatureEnabled } from '../featureFlags.js'
+import { securityApi } from '../api/security.js'
 
 type Props = {
   identityKey: string
@@ -45,7 +47,53 @@ export default function ProjectView({
   const [loadingMore, setLoadingMore] = useState(false)
   const [activeSources, setActiveSources] = useState<Set<SessionSource>>(new Set())
   const [isolatedCwd, setIsolatedCwd] = useState<string | null>(null)
+  const [scanRefreshKey, setScanRefreshKey] = useState(0)
   const fetchTokenRef = useRef(0)
+
+  // Re-fetch the session list when the scan worker updates findings —
+  // the scan_finding_count denormalised counter on Session rows drives
+  // the Library row badge, and without a refetch the badge never
+  // appears after the initial backfill.
+  //
+  // Gated by securityFeatureEnabled() so the IPC subscription, the
+  // mount-time bump, and the initial backfill check are all skipped
+  // when the feature is off — prod builds (where VITE_FEATURE_SECURITY
+  // isn't set) see this effect as a no-op.
+  //
+  // Debounce: backfill of N sessions publishes N session-rescanned
+  // events. Without coalescing, the renderer would refetch + re-render
+  // N times. Trail-edge debounce so we refetch once 300ms after the
+  // burst settles — fast enough that the badge feels live, slow
+  // enough that 500-session backfill collapses to a single refetch.
+  useEffect(() => {
+    if (!securityFeatureEnabled()) return
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const scheduleBump = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        setScanRefreshKey(k => k + 1)
+      }, 300)
+    }
+
+    // Subscribe BEFORE the mount bump so an event that arrives
+    // between these two lines isn't missed. Both execute in the same
+    // JS tick — events can't actually interleave — but the ordering
+    // documents the invariant.
+    const off = securityApi.onChange(scheduleBump)
+
+    // Bump once on mount (immediate, not debounced) to catch the
+    // cold-start race: a scan that completed between app boot and
+    // this subscription would otherwise leave us showing the
+    // pre-scan counts until the next change event lands.
+    setScanRefreshKey(k => k + 1)
+
+    return () => {
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [])
 
   useEffect(() => {
     setActiveSources(new Set())
@@ -96,7 +144,7 @@ export default function ProjectView({
         setSessions([])
         setDirectoryCounts([])
       })
-  }, [identityKey, sortOrder, activeSources])
+  }, [identityKey, sortOrder, activeSources, scanRefreshKey])
 
   const cursorRef = useRef(cursor)
   cursorRef.current = cursor

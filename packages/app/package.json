@@ -21,7 +21,7 @@
     "preview": "electron-vite preview",
     "clean": "rm -rf out dist-electron",
     "test": "vitest run",
-    "test:e2e": "pnpm run build:deps && pnpm run rebuild:native:electron && VITE_FEATURE_SHARE=1 electron-vite build && npx playwright test --config e2e/playwright.config.ts"
+    "test:e2e": "pnpm run build:deps && pnpm run rebuild:native:electron && VITE_FEATURE_SHARE=1 VITE_FEATURE_SECURITY=1 electron-vite build && npx playwright test --config e2e/playwright.config.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
@@ -31,12 +31,14 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/geist-mono": "^5.2.7",
     "@spool-lab/core": "workspace:*",
+    "@spool-lab/redact": "workspace:^",
     "@spool/share-kit": "workspace:*",
     "@tanstack/react-virtual": "^3.13.6",
     "acp-extension-claude": "^0.21.0",
     "acp-extension-codex": "^0.10.0",
     "better-sqlite3": "^11.10.0",
     "bindings": "^1.5.0",
+    "effect": "^3.21.2",
     "electron-updater": "^6.8.3",
     "file-uri-to-path": "^2.0.0",
     "i18next": "^25.10.10",
