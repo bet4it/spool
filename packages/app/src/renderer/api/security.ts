@@ -15,7 +15,11 @@ import type {
   ScanStatus,
   AllowlistEntryRow,
   Page,
+  BackupFileInfo,
+  DeleteBackupsResult,
 } from '@spool-lab/core'
+
+export type { BackupFileInfo }
 import type { SensitiveKind } from '@spool-lab/redact'
 import type { SecurityPreferences } from '../../preload/index.js'
 
@@ -75,6 +79,11 @@ export const securityApi = {
     valueHash: string
     sessionUuid?: string
   }) => window.spool.security.removeAllowlistEntry(args),
+
+  listBackups: (): Promise<BackupFileInfo[]> =>
+    window.spool.security.listBackups(),
+  deleteBackups: (names: string[]): Promise<DeleteBackupsResult> =>
+    window.spool.security.deleteBackups({ names }),
 }
 
 export type SecurityApi = typeof securityApi

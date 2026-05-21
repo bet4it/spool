@@ -23,10 +23,14 @@ import {
   listAllowlistEntries,
   removeAllowlistSession,
   removeAllowlistGlobal,
+  listBackups,
+  deleteBackups,
   type FindingFilter,
   type SessionFindingFilter,
   type ScanWorker,
   type PurgeResult,
+  type BackupFileInfo,
+  type DeleteBackupsResult,
 } from '@spool-lab/core'
 import type { SensitiveKind } from '@spool-lab/redact'
 import type Database from 'better-sqlite3'
@@ -65,6 +69,10 @@ export const SECURITY_IPC_CHANNELS = {
   // allowlist management
   LIST_ALLOWLIST_ENTRIES:      'security:list-allowlist-entries',
   REMOVE_ALLOWLIST_ENTRY:      'security:remove-allowlist-entry',
+
+  // maintenance
+  LIST_BACKUPS:                'security:list-backups',
+  DELETE_BACKUPS:              'security:delete-backups',
 
   // events (push: main → renderer via webContents.send)
   EVT_FINDINGS_CHANGED:        'security:evt-findings-changed',
@@ -178,6 +186,15 @@ export function registerSecurityIpc(deps: SecurityIpcDeps): () => void {
       getMainWindow()?.webContents.send(SECURITY_IPC_CHANNELS.EVT_PREFS_CHANGED, saved)
       return saved
     },
+  )
+
+  ipcMain.handle(
+    SECURITY_IPC_CHANNELS.LIST_BACKUPS,
+    (): BackupFileInfo[] => listBackups(db),
+  )
+  ipcMain.handle(
+    SECURITY_IPC_CHANNELS.DELETE_BACKUPS,
+    (_e, args: { names: string[] }): DeleteBackupsResult => deleteBackups(db, args.names),
   )
 
   ipcMain.handle(SECURITY_IPC_CHANNELS.LIST_ALLOWLIST_ENTRIES, () => listAllowlistEntries(db))

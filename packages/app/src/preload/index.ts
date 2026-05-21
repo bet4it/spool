@@ -8,6 +8,7 @@ import type {
   FindingsChange, ScanStatus, FindingFilter, SessionFindingFilter,
   AllowlistEntryRow,
   Page,
+  BackupFileInfo, DeleteBackupsResult,
 } from '@spool-lab/core'
 import type { SensitiveKind } from '@spool-lab/redact'
 
@@ -282,6 +283,11 @@ const api = {
       sessionUuid?: string
     }): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('security:remove-allowlist-entry', args),
+
+    listBackups: (): Promise<BackupFileInfo[]> =>
+      ipcRenderer.invoke('security:list-backups'),
+    deleteBackups: (args: { names: string[] }): Promise<DeleteBackupsResult> =>
+      ipcRenderer.invoke('security:delete-backups', args),
   },
 }
 
