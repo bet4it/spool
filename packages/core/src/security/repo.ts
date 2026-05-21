@@ -65,6 +65,8 @@ export interface FindingFilter {
   kinds?: readonly SensitiveKind[]
   state?: FindingState | 'any'
   severity?: 'high' | 'low'
+  limit?: number
+  offset?: number
 }
 
 export interface SessionFindingFilter {
@@ -74,6 +76,13 @@ export interface SessionFindingFilter {
   severity?: 'high' | 'low'
   /** Free-text on session title. */
   text?: string
+  limit?: number
+  offset?: number
+}
+
+export interface Page<T> {
+  rows: T[]
+  hasMore: boolean
 }
 
 // ─── Insert / delete (scan path) ──────────────────────────────────
@@ -283,20 +292,43 @@ export function listFindings(db: Database.Database, filter: FindingFilter): Find
     where.push(`kind NOT IN (${highKindsPlaceholders()})`)
     params.push(...HIGH_SEVERITY_KINDS_ARRAY)
   }
+  let pagination = ''
+  if (filter.limit !== undefined) {
+    pagination = ' LIMIT ? OFFSET ?'
+    params.push(filter.limit, filter.offset ?? 0)
+  }
   const sql = `SELECT * FROM findings
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-               ORDER BY detected_at DESC, id DESC`
+               ORDER BY detected_at DESC, id DESC${pagination}`
   const rows = db.prepare(sql).all(...params) as FindingRowDb[]
   return rows.map(rowToFinding)
 }
 
-export function listSessionsWithFindings(
+/** limit+1 peek to set `hasMore` without an extra COUNT round-trip. */
+function paginate<F extends { limit?: number }, R>(
+  filter: F,
+  fetch: (f: F) => R[],
+): Page<R> {
+  if (filter.limit === undefined) return { rows: fetch(filter), hasMore: false }
+  const peeked = fetch({ ...filter, limit: filter.limit + 1 })
+  const hasMore = peeked.length > filter.limit
+  return { rows: hasMore ? peeked.slice(0, filter.limit) : peeked, hasMore }
+}
+
+export function listFindingsPage(
   db: Database.Database,
-  filter: SessionFindingFilter,
-): SessionWithFindingCounts[] {
-  // For category/severity-aware filtering we need to compute counts
-  // from the findings table directly (denormalised counters can't
-  // express "only api-key findings"). We always recompute here.
+  filter: FindingFilter,
+): Page<FindingRow> {
+  return paginate(filter, f => listFindings(db, f))
+}
+
+/** Shared WHERE-clause builder for the session-findings join. Used by
+ *  both `listSessionsWithFindings` (paginated rows) and
+ *  `countSessionsWithFindings` (total) so the two stay consistent. */
+function buildSessionFindingWhereSql(filter: SessionFindingFilter): {
+  whereClause: string
+  params: unknown[]
+} {
   const params: unknown[] = []
   const stateCondition = filter.state && filter.state !== 'any'
     ? 'f.state = ?'
@@ -341,6 +373,20 @@ export function listSessionsWithFindings(
     params.push(`%${filter.text.trim()}%`)
   }
 
+  const whereClause = `${stateCondition} ${kindCondition} ${severityCondition} ${infoExclusion} ${textCondition}
+      AND COALESCE(s.message_count, 0) > 0`
+  return { whereClause, params }
+}
+
+export function listSessionsWithFindings(
+  db: Database.Database,
+  filter: SessionFindingFilter,
+): SessionWithFindingCounts[] {
+  // For category/severity-aware filtering we need to compute counts
+  // from the findings table directly (denormalised counters can't
+  // express "only api-key findings"). We always recompute here.
+  const { whereClause, params } = buildSessionFindingWhereSql(filter)
+
   const sql = `
     SELECT
       s.id              AS id,
@@ -360,14 +406,17 @@ export function listSessionsWithFindings(
     JOIN findings f ON f.session_id = s.id
     JOIN sources src ON src.id = s.source_id
     JOIN projects p ON p.id = s.project_id
-    WHERE ${stateCondition} ${kindCondition} ${severityCondition} ${infoExclusion} ${textCondition}
-      AND COALESCE(s.message_count, 0) > 0
+    WHERE ${whereClause}
     GROUP BY s.id
-    ORDER BY high_count DESC, finding_count DESC, s.started_at DESC
+    ORDER BY high_count DESC, finding_count DESC, s.started_at DESC, s.id DESC
+    ${filter.limit !== undefined ? 'LIMIT ? OFFSET ?' : ''}
   `
   // Placeholder order matches SQL: SELECT's CASE WHEN IN (?) binds first,
   // then the WHERE clause's params.
   const allParams = [...HIGH_SEVERITY_KINDS_ARRAY, ...params]
+  if (filter.limit !== undefined) {
+    allParams.push(filter.limit, filter.offset ?? 0)
+  }
   const rows = db.prepare(sql).all(...allParams) as Array<{
     id: number
     session_uuid: string
@@ -398,6 +447,34 @@ export function listSessionsWithFindings(
     cwd: r.cwd,
     projectDisplayName: r.project_display_name,
   }))
+}
+
+export function listSessionsWithFindingsPage(
+  db: Database.Database,
+  filter: SessionFindingFilter,
+): Page<SessionWithFindingCounts> {
+  return paginate(filter, f => listSessionsWithFindings(db, f))
+}
+
+/** Total distinct sessions matching the same filter as
+ *  `listSessionsWithFindings` — used by the renderer to show
+ *  "涉及 N 个会话" without loading every page. Cheaper than the list
+ *  query: no SELECT projection, no GROUP BY, no ORDER BY. */
+export function countSessionsWithFindings(
+  db: Database.Database,
+  filter: SessionFindingFilter,
+): number {
+  const { whereClause, params } = buildSessionFindingWhereSql(filter)
+  const sql = `
+    SELECT COUNT(DISTINCT s.id) AS total
+    FROM sessions s
+    JOIN findings f ON f.session_id = s.id
+    JOIN sources src ON src.id = s.source_id
+    JOIN projects p ON p.id = s.project_id
+    WHERE ${whereClause}
+  `
+  const row = db.prepare(sql).get(...params) as { total: number }
+  return row.total
 }
 
 /** Risk by category — one row per kind that has ≥ 1 active finding.
