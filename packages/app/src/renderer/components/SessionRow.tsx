@@ -228,4 +228,3 @@ function SecurityBadge({ session }: { session: Session }): React.ReactElement | 
     </span>
   )
 }
-
