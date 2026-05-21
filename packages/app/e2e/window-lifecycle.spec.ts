@@ -14,18 +14,34 @@ test.afterAll(async () => {
 test('window recovers after close → activate cycle', async () => {
   const { app } = ctx
 
-  // Close the window
   const firstWindow = await app.firstWindow()
-  await firstWindow.close()
+  await closeAndAwaitDestroy(firstWindow, app)
+  const restored = await activateAndAwaitNewWindow(app)
+  await expect(restored.locator('[data-testid="library-landing"]')).toBeVisible({ timeout: 10000 })
 
-  // Trigger activate (same code path as tray click)
-  await app.evaluate(({ app: a }) => a.emit('activate'))
-  const restored = await app.firstWindow()
-  await expect(restored.locator('[data-testid="library-landing"]')).toBeVisible({ timeout: 5000 })
-
-  // Second cycle — this is where the bug manifested
-  await restored.close()
-  await app.evaluate(({ app: a }) => a.emit('activate'))
-  const restoredAgain = await app.firstWindow()
-  await expect(restoredAgain.locator('[data-testid="library-landing"]')).toBeVisible({ timeout: 5000 })
+  // Second cycle — this is where the original bug manifested.
+  await closeAndAwaitDestroy(restored, app)
+  const restoredAgain = await activateAndAwaitNewWindow(app)
+  await expect(restoredAgain.locator('[data-testid="library-landing"]')).toBeVisible({ timeout: 10000 })
 })
+
+// page.close() returns when the renderer Page is gone, but the main-process
+// BrowserWindow 'closed' event (which nulls mainWindow) fires a tick later.
+// Without this poll, showOrCreateWindow can race and hit the `.show()` branch
+// on a half-destroyed window — no new BrowserWindow is created, so the
+// 'window' event we arm below never fires and the test stalls until timeout.
+async function closeAndAwaitDestroy(page: import('@playwright/test').Page, app: import('@playwright/test').ElectronApplication) {
+  await page.close()
+  await app.evaluate(({ BrowserWindow }) => new Promise<void>((resolve) => {
+    const tick = () => BrowserWindow.getAllWindows().length === 0 ? resolve() : setTimeout(tick, 25)
+    tick()
+  }))
+}
+
+async function activateAndAwaitNewWindow(app: import('@playwright/test').ElectronApplication) {
+  const newWindow = app.waitForEvent('window')
+  await app.evaluate(({ app: a }) => a.emit('activate'))
+  const page = await newWindow
+  await page.waitForLoadState('domcontentloaded')
+  return page
+}
