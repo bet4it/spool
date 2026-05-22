@@ -43,6 +43,17 @@ export interface SecurityPreferences {
    *  The provider is a stub today; this preference is the toggle UI
    *  state so the user's choice survives a restart once ML lands. */
   pfEnabled: boolean
+  /** True once the user has dismissed the in-page PF discovery callout
+   *  on the Security page. Permanent — the Settings card stays as the
+   *  ongoing management surface, the callout is only an acquisition
+   *  prompt. */
+  pfCalloutDismissed: boolean
+  /** Survives renderer remounts + app restarts. True between the moment
+   *  the user clicks Enable in the callout and the moment the runtime
+   *  + backfill have settled. Lets main know to auto-flip pfEnabled
+   *  the moment the download lands, and lets the callout render an
+   *  "Activating..." state instead of vanishing into a silent gap. */
+  pfActivationPending: boolean
 }
 
 const DEFAULTS: SecurityPreferences = {
@@ -51,6 +62,8 @@ const DEFAULTS: SecurityPreferences = {
   rescanAfterSync: 'auto',
   revealValuesOnHoverOnly: false,
   pfEnabled: false,
+  pfCalloutDismissed: false,
+  pfActivationPending: false,
 }
 
 interface SecurityConfigFile {
@@ -59,6 +72,8 @@ interface SecurityConfigFile {
   rescanAfterSync?: unknown
   revealValuesOnHoverOnly?: unknown
   pfEnabled?: unknown
+  pfCalloutDismissed?: unknown
+  pfActivationPending?: unknown
   [key: string]: unknown
 }
 
@@ -93,6 +108,8 @@ export function loadSecurityPreferences(): SecurityPreferences {
     rescanAfterSync: normalizeRescan(c.rescanAfterSync),
     revealValuesOnHoverOnly: c.revealValuesOnHoverOnly === true,
     pfEnabled: c.pfEnabled === true,
+    pfCalloutDismissed: c.pfCalloutDismissed === true,
+    pfActivationPending: c.pfActivationPending === true,
   }
 }
 
@@ -104,7 +121,17 @@ export function saveSecurityPreferences(next: Partial<SecurityPreferences>): Sec
   if (next.infoDefaultVisible !== undefined) merged.infoDefaultVisible = next.infoDefaultVisible === true
   if (next.rescanAfterSync !== undefined) merged.rescanAfterSync = normalizeRescan(next.rescanAfterSync)
   if (next.revealValuesOnHoverOnly !== undefined) merged.revealValuesOnHoverOnly = next.revealValuesOnHoverOnly === true
-  if (next.pfEnabled !== undefined) merged.pfEnabled = next.pfEnabled === true
+  if (next.pfEnabled !== undefined) {
+    merged.pfEnabled = next.pfEnabled === true
+    // Enabling pf supersedes the in-page discovery nudge — once a user
+    // actually turns it on (via Settings or the callout itself) the
+    // "Add Privacy Filter" prompt becomes redundant and should never
+    // re-appear. The callout's Activating / Re-scanning states are
+    // separate signals gated by pfActivationPending, not by this flag.
+    if (next.pfEnabled === true) merged.pfCalloutDismissed = true
+  }
+  if (next.pfCalloutDismissed !== undefined) merged.pfCalloutDismissed = next.pfCalloutDismissed === true
+  if (next.pfActivationPending !== undefined) merged.pfActivationPending = next.pfActivationPending === true
   writeFile(merged)
   return loadSecurityPreferences()
 }

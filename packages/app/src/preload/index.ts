@@ -18,6 +18,8 @@ export interface SecurityPreferences {
   rescanAfterSync: 'auto' | 'manual'
   revealValuesOnHoverOnly: boolean
   pfEnabled: boolean
+  pfCalloutDismissed: boolean
+  pfActivationPending: boolean
 }
 
 export type PfPhase =
