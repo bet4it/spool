@@ -64,11 +64,15 @@ export default function PfDownloadCard() {
     <div
       data-testid="settings-detector-pf"
       data-phase={state.phase}
-      className="rounded-[8px] border border-warm-border dark:border-dark-border bg-warm-surface/40 dark:bg-dark-surface/40 px-3.5 py-3"
+      className="relative rounded-[8px] border border-warm-border dark:border-dark-border bg-warm-surface/40 dark:bg-dark-surface/40 px-3.5 py-3"
     >
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+      <div className="min-w-0">
+        {/* Title row reserves right-space so the absolute-positioned
+         *  action (Download / Cancel / Toggle / Retry) doesn't run
+         *  under "Privacy Filter · 945 MB". Body + footer below get
+         *  full card width — was wrapping into 2-3 lines when the
+         *  button competed for horizontal space in a flex row. */}
+        <div className="flex items-center gap-2 mb-1 pr-14">
             <span className="text-xs font-medium text-warm-text dark:text-dark-text">
               {t('settings.security.detector_pf_title', { defaultValue: 'Privacy Filter' })}
             </span>
@@ -78,12 +82,12 @@ export default function PfDownloadCard() {
           </div>
           <p className="text-[11px] leading-[16px] text-warm-faint dark:text-dark-muted mb-1.5">
             {t('settings.security.detector_pf_body', {
-              defaultValue: 'Catches obfuscated emails, phone numbers, and DOB that regex patterns miss.',
+              defaultValue: 'Fills regex blind spots: emails, phones, DOB, novel secrets. Names / addresses / URLs / accounts disabled.',
             })}
           </p>
           <p className="font-mono text-[10px] text-warm-faint dark:text-dark-muted/70">
             {t('settings.security.detector_pf_footer', {
-              defaultValue: 'OpenAI Privacy Filter · Apache 2.0 · runs on-device',
+              defaultValue: 'OpenAI · Apache 2.0 · ~5-30s per session · on-device',
             })}
           </p>
 
@@ -100,20 +104,33 @@ export default function PfDownloadCard() {
             </p>
           )}
 
-          {state.phase === 'downloading' && (
+          {(state.phase === 'downloading' || ((state.phase === 'not-installed' || state.phase === 'failed') && state.bytesDownloaded > 0)) && (
             <div className="mt-2.5" data-testid="settings-pf-progress">
               <div className="h-1.5 rounded-full bg-warm-surface dark:bg-dark-surface overflow-hidden">
                 <div
-                  className="h-full bg-accent dark:bg-accent-dark transition-all"
+                  className={`h-full transition-[width] duration-200 ease-out ${
+                    state.phase === 'downloading'
+                      ? 'bg-accent dark:bg-accent-dark'
+                      // Cancelled or failed mid-flight — show the
+                      // resume point in a dimmer tone so the user
+                      // sees how far they got without confusing it
+                      // for an active download.
+                      : 'bg-accent/50 dark:bg-accent-dark/50'
+                  }`}
                   style={{ width: `${percent}%` }}
                 />
               </div>
+              {/* tabular-nums keeps digit POSITIONS stable inside each
+               *  value; explicit widths are unnecessary because the
+               *  whole line uses mono + nowrap, so the only layout
+               *  shift would be on a char-count flip (e.g. 99 → 100),
+               *  rare enough to not justify the visible gap. */}
               <p className="mt-1 font-mono text-[10px] text-warm-faint dark:text-dark-muted tabular-nums whitespace-nowrap">
-                <span className="inline-block w-[5.5em] text-right">{formatBytes(state.bytesDownloaded)}</span>
+                {formatBytes(state.bytesDownloaded)}
                 {' / '}
-                <span className="inline-block w-[5.5em] text-right">{formatBytes(state.bytesTotal)}</span>
+                {formatBytes(state.bytesTotal)}
                 {' · '}
-                <span className="inline-block w-[3em] text-right">{percent}%</span>
+                {percent}%
               </p>
             </div>
           )}
@@ -124,19 +141,21 @@ export default function PfDownloadCard() {
               {state.error}
             </p>
           )}
-        </div>
+      </div>
 
-        <div className="shrink-0 flex items-center gap-2">
+      <div className="absolute top-3 right-3.5 flex items-center gap-2">
           {state.phase === 'not-installed' && (
             <button
               type="button"
               data-testid="settings-pf-download"
               disabled={busy}
               onClick={() => { void startDownload() }}
-              className="inline-flex items-center gap-1.5 h-7 rounded-[6px] border border-warm-border dark:border-dark-border bg-warm-surface dark:bg-dark-surface hover:border-warm-border2 dark:hover:border-dark-border2 px-2.5 text-[12px] text-warm-text dark:text-dark-text disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-accent dark:text-accent-dark hover:underline underline-offset-2 disabled:opacity-60 transition-colors"
             >
-              <Download size={11} strokeWidth={1.8} aria-hidden />
-              {t('settings.security.detector_pf_download', { defaultValue: 'Download' })}
+              <Download size={10} strokeWidth={1.8} aria-hidden />
+              {state.bytesDownloaded > 0
+                ? t('settings.security.detector_pf_resume', { defaultValue: 'Resume' })
+                : t('settings.security.detector_pf_download', { defaultValue: 'Download' })}
             </button>
           )}
           {state.phase === 'downloading' && (
@@ -144,9 +163,9 @@ export default function PfDownloadCard() {
               type="button"
               data-testid="settings-pf-cancel"
               onClick={cancelDownload}
-              className="inline-flex items-center gap-1.5 h-7 rounded-[6px] border border-warm-border dark:border-dark-border bg-warm-surface dark:bg-dark-surface hover:border-warm-border2 dark:hover:border-dark-border2 px-2.5 text-[12px] text-warm-text dark:text-dark-text transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-accent dark:text-accent-dark hover:underline underline-offset-2 transition-colors"
             >
-              <X size={11} strokeWidth={1.8} aria-hidden />
+              <X size={10} strokeWidth={1.8} aria-hidden />
               {t('settings.security.detector_pf_cancel', { defaultValue: 'Cancel' })}
             </button>
           )}
@@ -163,13 +182,12 @@ export default function PfDownloadCard() {
               type="button"
               data-testid="settings-pf-retry"
               onClick={() => { void startDownload() }}
-              className="inline-flex items-center gap-1.5 h-7 rounded-[6px] border border-warm-border dark:border-dark-border bg-warm-surface dark:bg-dark-surface hover:border-warm-border2 dark:hover:border-dark-border2 px-2.5 text-[12px] text-warm-text dark:text-dark-text transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-accent dark:text-accent-dark hover:underline underline-offset-2 transition-colors"
             >
-              <RotateCw size={11} strokeWidth={1.8} aria-hidden />
+              <RotateCw size={10} strokeWidth={1.8} aria-hidden />
               {t('settings.security.detector_pf_retry', { defaultValue: 'Retry' })}
             </button>
           )}
-        </div>
       </div>
     </div>
   )

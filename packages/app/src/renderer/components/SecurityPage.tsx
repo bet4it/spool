@@ -36,7 +36,6 @@ import {
 import { securityApi } from '../api/security.js'
 import { securityFeatureEnabled } from '../featureFlags.js'
 import PurgeConfirmDialog from './security/PurgeConfirmDialog.js'
-import PfCallout from './security/PfCallout.js'
 import DetectorsChip from './security/DetectorsChip.js'
 import { parseQualifier, toggleKindQualifier } from './security/parse-qualifier.js'
 import { truncateValue } from './security/truncate-value.js'
@@ -150,6 +149,10 @@ function SecurityPageInner({ onOpenSession, onShareSession }: Props) {
       }
       setLoading(false)
       setError(null)
+      // Return fresh risk so callers (e.g. the manual-rescan ACK
+      // banner) can read post-refresh counts without waiting for the
+      // next React render to update `riskRef.current`.
+      return r
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setLoading(false)
@@ -289,14 +292,22 @@ function SecurityPageInner({ onOpenSession, onShareSession }: Props) {
           if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
           setDisplayBusy(false)
           setRescanInFlight(false)
-          void refreshRef.current()
-          const currentHigh = riskRef.current.filter(r => r.severity === 'high').reduce((a, c) => a + c.count, 0)
-          const currentLow = riskRef.current.filter(r => r.severity === 'low').reduce((a, c) => a + c.count, 0)
-          setScanResult({
-            scanned: lastBackfillTotalRef.current > 0 ? lastBackfillTotalRef.current : sessionsLenRef.current,
-            high: currentHigh,
-            low: currentLow,
-          })
+          // Await the refetch + read counts from its return value, not
+          // from riskRef.current — the ref isn't updated until the
+          // next React render commits, so reading it synchronously
+          // here yields the PRE-refresh counts (banner showed 43+21
+          // while the meta row showed 75; this closes that gap).
+          void (async () => {
+            const fresh = await refreshRef.current()
+            const rows = fresh ?? riskRef.current
+            const currentHigh = rows.filter(r => r.severity === 'high').reduce((a, c) => a + c.count, 0)
+            const currentLow = rows.filter(r => r.severity === 'low').reduce((a, c) => a + c.count, 0)
+            setScanResult({
+              scanned: lastBackfillTotalRef.current > 0 ? lastBackfillTotalRef.current : sessionsLenRef.current,
+              high: currentHigh,
+              low: currentLow,
+            })
+          })()
           return
         }
         // Auto bursts — trailing 1500ms gate so brief idle windows
@@ -310,21 +321,26 @@ function SecurityPageInner({ onOpenSession, onShareSession }: Props) {
           // the scan didn't mutate any findings (re-scan that found
           // nothing new still touches `scan_completed_at`, but emits
           // no onChange event — without this the meta row would keep
-          // reading "scanned 5 minutes ago" forever).
-          void refreshRef.current()
-          const currentHigh = riskRef.current.filter(r => r.severity === 'high').reduce((a, c) => a + c.count, 0)
-          const delta = currentHigh - highCountAtScanStartRef.current
-          if (delta > 0) {
-            // Background discovery — non-blocking toast.
-            toast.warning(
-              t('security.scan_toast_new_findings', {
-                count: delta,
-                defaultValue: 'Found {{count}} new high-risk findings',
-              }),
-            )
-          }
-          // delta <= 0 → silent. Ambient dot + sidebar badge already
-          // tell the story.
+          // reading "scanned 5 minutes ago" forever). Read counts
+          // from the returned data, not riskRef.current — the ref
+          // lags the actual fetch by one React commit.
+          void (async () => {
+            const fresh = await refreshRef.current()
+            const rows = fresh ?? riskRef.current
+            const currentHigh = rows.filter(r => r.severity === 'high').reduce((a, c) => a + c.count, 0)
+            const delta = currentHigh - highCountAtScanStartRef.current
+            if (delta > 0) {
+              // Background discovery — non-blocking toast.
+              toast.warning(
+                t('security.scan_toast_new_findings', {
+                  count: delta,
+                  defaultValue: 'Found {{count}} new high-risk findings',
+                }),
+              )
+            }
+            // delta <= 0 → silent. Ambient dot + sidebar badge already
+            // tell the story.
+          })()
         }, 1500)
       }
     })
@@ -531,13 +547,6 @@ function SecurityPageInner({ onOpenSession, onShareSession }: Props) {
               result={scanResult}
               onDismiss={() => setScanResult(null)}
             />
-          )}
-          {/* PF discovery callout — sits below any transient scan
-           *  banner so the active-scan signal always wins for
-           *  attention. Self-gates on pfCalloutDismissed + pfEnabled;
-           *  parent doesn't need to know the state. */}
-          {!shouldShowScanBanner(scanStatus, displayBusy) && !scanResult && (
-            <PfCallout />
           )}
           {loading ? null : error ? (
             <p className="text-sm text-warm-muted dark:text-dark-muted py-4">

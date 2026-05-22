@@ -222,8 +222,8 @@
       "detector_pattern_footer": "13 Detektoren · unter 100 ms pro Sitzung",
       "detector_always_on": "Immer aktiv",
       "detector_pf_title": "Privacy Filter",
-      "detector_pf_body": "Erkennt verschleierte E-Mails, Telefonnummern und Geburtsdaten, die Regex nicht erfasst.",
-      "detector_pf_footer": "OpenAI Privacy Filter · Apache 2.0 · läuft lokal",
+      "detector_pf_body": "Füllt Regex-Lücken: E-Mails, Telefonnummern, Geburtsdaten, neue Secret-Formate. Namen / Adressen / URLs / Konten deaktiviert.",
+      "detector_pf_footer": "OpenAI · Apache 2.0 · ~5-30 s/Sitzung · lokal",
       "detector_pf_download": "Download",
       "detector_pf_cancel": "Cancel",
       "detector_pf_retry": "Retry",
@@ -287,7 +287,10 @@
       "backups_load_failed": "Could not load backups: {{message}}",
       "backups_delete_failed_title": "Could not delete backups",
       "backups_delete_partial_title": "Deleted {{deleted}} of {{requested}} backups",
-      "backups_delete_partial_desc": "Freed {{size}}. Some files could not be removed — they may have been deleted by another process."
+      "backups_delete_partial_desc": "Freed {{size}}. Some files could not be removed — they may have been deleted by another process.",
+      "experimental_title": "Experimentell",
+      "experimental_intro": "Opt-in-Detektoren, die noch nicht für den täglichen Einsatz empfohlen werden. Bei code-lastigen Inhalten können Falsch-Positiv-Raten hoch sein.",
+      "detector_pf_resume": "Fortsetzen"
     }
   },
   "security": {

@@ -216,8 +216,8 @@
       "detector_pattern_footer": "13 個の検出器 · セッションあたり 100ms 未満",
       "detector_always_on": "常時オン",
       "detector_pf_title": "Privacy Filter",
-      "detector_pf_body": "正規表現では検出できない難読化メール、電話番号、生年月日を検出します。",
-      "detector_pf_footer": "OpenAI Privacy Filter · Apache 2.0 · デバイス内で実行",
+      "detector_pf_body": "正規表現の盲点を補完: メール、電話、生年月日、新形式の secret。氏名 / 住所 / URL / 口座番号は無効。",
+      "detector_pf_footer": "OpenAI · Apache 2.0 · セッション ~5-30秒 · ローカル",
       "detector_pf_download": "Download",
       "detector_pf_cancel": "Cancel",
       "detector_pf_retry": "Retry",
@@ -279,7 +279,10 @@
       "backups_load_failed": "Could not load backups: {{message}}",
       "backups_delete_failed_title": "Could not delete backups",
       "backups_delete_partial_title": "Deleted {{deleted}} of {{requested}} backups",
-      "backups_delete_partial_desc": "Freed {{size}}. Some files could not be removed — they may have been deleted by another process."
+      "backups_delete_partial_desc": "Freed {{size}}. Some files could not be removed — they may have been deleted by another process.",
+      "experimental_title": "実験的機能",
+      "experimental_intro": "オプトインの検出器。日常的な使用はまだ推奨されません。コード中心のコンテンツでは誤検出率が高くなる可能性があります。",
+      "detector_pf_resume": "再開"
     }
   },
   "security": {
