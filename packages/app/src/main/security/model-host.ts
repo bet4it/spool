@@ -76,7 +76,9 @@ export function makeModelHost(
 ): Effect.Effect<ModelHost, never, Scope.Scope> {
   return Effect.gen(function* () {
     const ipc = deps.ipc ?? ipcMain
-    const readyTimeoutMs = deps.readyTimeoutMs ?? 10_000
+    // 90 s default for pf:ready — cold WASM model load can take close
+    // to a minute; this gives headroom without inviting indefinite hang.
+    const readyTimeoutMs = deps.readyTimeoutMs ?? 90_000
     const analyzeTimeoutMs = deps.analyzeTimeoutMs ?? 30_000
     const stateRef = yield* Ref.make<PfState>({ status: 'loading', runtime: null })
     const pending = new Map<number, {
@@ -107,19 +109,14 @@ export function makeModelHost(
         }).pipe(Effect.catchAll((err) => failWith(err).pipe(Effect.as(null))))
 
         if (handshake?.kind === 'ready') {
-          const s: PfState = {
+          yield* Ref.set(stateRef, {
             status: 'ready',
             runtime: handshake.runtime,
             detectionMs: handshake.detectionMs,
-          }
-          if (handshake.adapterLabel !== undefined) s.adapterLabel = handshake.adapterLabel
-          yield* Ref.set(stateRef, s)
-        } else if (handshake?.kind === 'failed') {
-          yield* Ref.set(stateRef, {
-            status: 'failed',
-            runtime: null,
-            error: handshake.message,
+            ...(handshake.adapterLabel !== undefined ? { adapterLabel: handshake.adapterLabel } : {}),
           })
+        } else if (handshake?.kind === 'failed') {
+          yield* Ref.set(stateRef, { status: 'failed', runtime: null, error: handshake.message })
         }
         return w
       }),
@@ -228,13 +225,12 @@ function awaitReady(
       settle({
         kind: 'ready',
         runtime: payload.runtime,
-        ...(payload.adapterLabel !== undefined ? { adapterLabel: payload.adapterLabel } : {}),
         detectionMs: payload.detectionMs,
+        ...(payload.adapterLabel !== undefined ? { adapterLabel: payload.adapterLabel } : {}),
       })
     }
     const onFailed = (event: IpcMainEvent, payload: PfFailedMessage) => {
-      if (event.sender.id !== targetId) return
-      settle({ kind: 'failed', message: payload.message })
+      if (event.sender.id === targetId) settle({ kind: 'failed', message: payload.message })
     }
     const timer = setTimeout(
       () => settle({ kind: 'failed', message: `pf:ready handshake timed out after ${timeoutMs}ms` }),
