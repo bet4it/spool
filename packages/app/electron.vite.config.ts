@@ -44,16 +44,40 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ['@spool-lab/core', '@spool-lab/redact'] })],
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/preload/index.ts') },
+        input: {
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          // Hidden Privacy Filter inference window has its own preload —
+          // exposes a narrow `pfBridge` (no Spool app surface) so the
+          // inference renderer can't reach the main app's IPC channels.
+          inference: resolve(__dirname, 'src/preload/inference.ts'),
+        },
       },
     },
     resolve: { alias: coreAlias },
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
+    server: {
+      fs: {
+        // The HTML at src/renderer/pf-inference.html references
+        // ../inference/pf-inference.ts. Whitelist the sibling source
+        // dir so Vite's dev server serves the TS entry; without this
+        // Vite refuses to read outside its root and silently falls
+        // back to index.html, leaving pf:ready never fired.
+        allow: [resolve(__dirname, 'src/inference'), resolve(__dirname, 'src/renderer')],
+      },
+    },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/renderer/index.html') },
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          // Inference HTML sits inside the renderer root — Rollup 4
+          // rejects build inputs whose path resolves outside the root
+          // (it can't compute a bare emit filename for them). The TS
+          // it loads is referenced relatively (`../inference/...`) so
+          // logic still lives next to the rest of the inference code.
+          'pf-inference': resolve(__dirname, 'src/renderer/pf-inference.html'),
+        },
       },
     },
     resolve: { alias: coreAlias },
