@@ -67,6 +67,14 @@ async function main(): Promise<void> {
     tx.env.allowRemoteModels = false
     tx.env.localModelPath = 'pf-model:///'
     tx.env.useBrowserCache = false
+    // ORT Runtime Web defaults to fetching its WASM / JS runtime
+    // from cdn.jsdelivr.net — incompatible with the offline guarantee
+    // + blocked by our strict CSP. Point it at our protocol's `ort/`
+    // subpath; main serves those files out of onnxruntime-web's dist.
+    // The wasm field is loosely typed via `?` — guard the assignment.
+    if (tx.env.backends.onnx.wasm) {
+      tx.env.backends.onnx.wasm.wasmPaths = 'pf-model:///ort/'
+    }
     const built = await tx.pipeline('token-classification', PF_MODEL_ID, {
       device: runtime === 'webgpu' ? 'webgpu' : 'wasm',
       dtype: 'q4',
@@ -96,16 +104,39 @@ async function analyzeOne(
 ): Promise<void> {
   try {
     const output = await pipe(req.text, { aggregation_strategy: 'simple' })
-    const matches: PfMatch[] = output.map((m) => ({
-      // openai/privacy-filter emits `private_person`, `private_email`,
-      // etc. The class-mapping module operates on the short form so
-      // the same code works for future models without the prefix.
-      class: m.entity_group.toLowerCase().replace(/^private_/, ''),
-      value: m.word,
-      start: m.start,
-      end: m.end,
-      score: m.score,
-    }))
+    // findings.start_offset + end_offset are NOT NULL in SQLite, so
+    // a match without character anchors would roll back the entire
+    // session's scan transaction (taking the regex findings down with
+    // it). transformers.js with BPE tokenizers sometimes returns
+    // start/end undefined even with aggregation_strategy='simple',
+    // so:
+    //   1) keep what the tokenizer gave us when it's there
+    //   2) otherwise re-locate the word in the source via indexOf
+    //   3) only drop if even indexOf comes up empty (rare — the word
+    //      came FROM the tokenizer over the source, so finding it
+    //      back should be almost universal)
+    let searchCursor = 0
+    const matches: PfMatch[] = output.flatMap((m) => {
+      const cls = m.entity_group.toLowerCase().replace(/^private_/, '')
+      let start = m.start
+      let end = m.end
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        // Use a cursor so multiple instances of the same word land at
+        // distinct offsets instead of all collapsing onto the first
+        // occurrence. transformers.js returns matches in document
+        // order, so the cursor advances monotonically.
+        const idx = req.text.indexOf(m.word, searchCursor)
+        if (idx < 0) return []  // word doesn't actually appear — drop
+        start = idx
+        end = idx + m.word.length
+        searchCursor = end
+      } else {
+        // Advance cursor past native-offset matches too so a later
+        // fallback doesn't go backwards in the text.
+        searchCursor = Math.max(searchCursor, end as number)
+      }
+      return [{ class: cls, value: m.word, start: start as number, end: end as number, score: m.score }]
+    })
     bridge.sendAnalyzeResult({ reqId: req.reqId, ok: true, matches })
   } catch (err) {
     bridge.sendAnalyzeResult({

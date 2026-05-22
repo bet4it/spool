@@ -37,6 +37,7 @@ import { securityApi } from '../api/security.js'
 import { securityFeatureEnabled } from '../featureFlags.js'
 import PurgeConfirmDialog from './security/PurgeConfirmDialog.js'
 import PfCallout from './security/PfCallout.js'
+import DetectorsChip from './security/DetectorsChip.js'
 import { parseQualifier, toggleKindQualifier } from './security/parse-qualifier.js'
 import { truncateValue } from './security/truncate-value.js'
 import {
@@ -476,6 +477,12 @@ function SecurityPageInner({ onOpenSession, onShareSession }: Props) {
               </button>
             </>
           )}
+          {scanStatus?.currentProfile && (
+            <>
+              {' · '}
+              <DetectorsChip profile={scanStatus.currentProfile} />
+            </>
+          )}
         </span>
         <button
           type="button"
@@ -730,9 +737,26 @@ function ScanBanner({ status }: { status: ScanStatus }) {
         <span className="text-[13px] font-medium text-accent dark:text-accent-dark">
           {t('security.scanning', { defaultValue: 'Scanning' })}
         </span>
-        <span className="font-mono text-[11px] text-warm-muted dark:text-dark-muted tabular-nums">
-          {status.currentProfile}
-        </span>
+        {/* Burst-scoped progress count: "23 of 145 rescans" makes it
+         *  obvious this is the active re-scan batch (sessions whose
+         *  scan_profile drifted from current), not the library total.
+         *  Without the verb "rescans" the slash format invites
+         *  comparison with the sidebar's total-sessions number — which
+         *  is a different denominator and would feel inconsistent.
+         *  Only show once we have a stable total; suppress while
+         *  inFlight=0 (terminal moment before the banner hides). */}
+        {total > 0 && (
+          <span
+            data-testid="security-scan-banner-progress"
+            className="font-mono text-[11px] text-warm-muted dark:text-dark-muted tabular-nums whitespace-nowrap"
+          >
+            {t('security.scanning_progress', {
+              done,
+              total,
+              defaultValue: '{{done}} of {{total}} rescans',
+            })}
+          </span>
+        )}
       </div>
       <span aria-hidden />
       {/* Deterministic progress strip. The pct read here is fine
@@ -1017,9 +1041,21 @@ function SessionCard({
       sessionId: session.id,
       state: 'active',
       limit: findingsPageCount * FINDINGS_PAGE_SIZE,
+      // Without this, a session with 800+ absolute-path findings would
+      // page-window-shove every env-var / api-key off the first page
+      // and the strip would render empty. Skip info-tier at the SQL
+      // layer; the Info drawer at the bottom of the page is where
+      // those audit records surface.
+      excludeInfo: true,
     }
     if (activeKinds.length > 0) {
       f.kinds = activeKinds as NonNullable<FindingFilter['kinds']>
+      // When the user pins an info kind explicitly, we DO want it back.
+      // listFindings already ignores excludeInfo if `kinds` contains an
+      // info kind, but flip the flag here too so the contract is
+      // obvious at the call site.
+      const someInfo = activeKinds.some(k => INFO_SEVERITY_KINDS.has(k as SensitiveKind))
+      if (someInfo) f.excludeInfo = false
     }
     try {
       const page = await securityApi.listFindingsPage(f)

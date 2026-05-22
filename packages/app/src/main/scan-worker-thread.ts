@@ -128,6 +128,11 @@ void (async () => {
     displayName: 'Privacy Filter (ML)',
     available: () => pfOnline && loadSecurityPreferences().pfEnabled,
     analyze: async (text: string): Promise<SensitiveMatch[]> => {
+      // Short-circuit empty / whitespace-only chunks. The model's
+      // GatherBlockQuantized op fails with "Invalid dispatch group
+      // size (0, 1, 1)" on zero-token input; cheaper for everyone to
+      // skip the IPC round-trip entirely.
+      if (text.trim().length === 0) return []
       const reqId = pfNextReqId++
       const raw: PfRawMatchWire[] = await new Promise((resolve, reject) => {
         pfPending.set(reqId, { resolve, reject })
@@ -144,7 +149,13 @@ void (async () => {
       // the scan engine already ran regex over upstream, but we don't
       // have access to those matches here.
       const regexMatches = detectWithRegex(text, 'regex')
-      return mapPfMatches(raw as PfRawMatch[], { regexMatches, fullText: text })
+      const mapped = mapPfMatches(raw as PfRawMatch[], { regexMatches, fullText: text })
+      // Diagnostic: see at a glance what % of raw matches survive
+      // class-mapping suppression. raw=N → mapped=M tells us if
+      // suppression rules are too aggressive or if labels are landing
+      // in the default-drop branch.
+      console.log(`[pf provider] raw=${raw.length} mapped=${mapped.length} kinds=${raw.map(m => m.class).join(',')}`)
+      return mapped
     },
   }
 
