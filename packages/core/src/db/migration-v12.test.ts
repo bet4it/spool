@@ -18,8 +18,8 @@ function seedProjectAndSession(db: Database.Database, sessionUuid: string): numb
 }
 
 describe('migration v12 — security scan schema', () => {
-  it('LATEST_SCHEMA_VERSION reflects the latest migration', () => {
-    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(12)
+  it('LATEST_SCHEMA_VERSION is 13', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(13)
   })
 
   it('adds 5 scan_* columns to sessions (profile / completed_at / finding_count / high_count / purged_count)', () => {
@@ -83,7 +83,7 @@ describe('migration v12 — security scan schema', () => {
     expect((db.prepare('SELECT COUNT(*) AS c FROM findings').get() as { c: number }).c).toBe(0)
   })
 
-  it('creates allowlist_session and allowlist_global tables', () => {
+  it('creates allowlist_session and allowlist_global tables with NO preview/reason columns', () => {
     const db = new Database(':memory:')
     runMigrations(db)
     expect(
@@ -92,6 +92,14 @@ describe('migration v12 — security scan schema', () => {
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get('allowlist_global'),
     ).toBeDefined()
+    // The stored-preview approach was abandoned in favour of live
+    // reconstruction — neither table carries a preview or reason column.
+    for (const table of ['allowlist_session', 'allowlist_global']) {
+      const names = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+        .map(c => c.name)
+      expect(names, `${table} should NOT have a preview column`).not.toContain('preview')
+      expect(names, `${table} should NOT have a reason column`).not.toContain('reason')
+    }
   })
 
   it('user_version reaches the latest schema after a clean migration', () => {

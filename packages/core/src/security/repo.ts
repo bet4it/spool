@@ -12,7 +12,11 @@
 
 import type Database from 'better-sqlite3'
 import type { SensitiveKind } from '@spool-lab/redact'
-import { HIGH_SEVERITY_KINDS, INFO_SEVERITY_KINDS, severityOf } from '@spool-lab/redact'
+import {
+  HIGH_SEVERITY_KINDS,
+  INFO_SEVERITY_KINDS,
+  severityOf,
+} from '@spool-lab/redact'
 import type {
   FindingRow,
   FindingState,
@@ -638,7 +642,8 @@ export function addAllowlistGlobal(
   valueHash: string,
 ): void {
   db.prepare(
-    `INSERT OR IGNORE INTO allowlist_global (kind, value_hash) VALUES (?, ?)`,
+    `INSERT OR IGNORE INTO allowlist_global (kind, value_hash)
+     VALUES (?, ?)`,
   ).run(kind, valueHash)
 }
 
@@ -672,14 +677,25 @@ export interface AllowlistEntryRow {
   /** Session row context — null for global entries. */
   sessionUuid: string | null
   sessionTitle: string | null
+  /** The live plaintext value, reconstructed at read time from a
+   *  matching non-purged finding's message text (NOT stored on the
+   *  allowlist row). Null when no such finding survives — the source
+   *  message was purged, the finding was deleted, or the session is
+   *  gone — in which case the UI falls back to the kind label alone. */
+  value: string | null
 }
 
 /** All allowlist rows from both tables, joined with the originating
  *  session metadata. Drives the Settings → Security pane's "Manage…"
- *  modal so the user can review and revoke past decisions. */
+ *  modal so the user can review and revoke past decisions.
+ *
+ *  Each entry's display value is reconstructed live from a matching
+ *  finding's message text — the same plaintext the findings view
+ *  shows (blurred). Nothing is persisted on the allowlist row. */
 export function listAllowlistEntries(db: Database.Database): AllowlistEntryRow[] {
   const sessionRows = db.prepare(
-    `SELECT a.kind          AS kind,
+    `SELECT a.session_id     AS session_id,
+            a.kind          AS kind,
             a.value_hash    AS value_hash,
             a.created_at    AS created_at,
             s.session_uuid  AS session_uuid,
@@ -688,6 +704,7 @@ export function listAllowlistEntries(db: Database.Database): AllowlistEntryRow[]
        JOIN sessions s ON s.id = a.session_id
       ORDER BY a.created_at DESC`,
   ).all() as Array<{
+    session_id: number
     kind: string
     value_hash: string
     created_at: string
@@ -703,6 +720,27 @@ export function listAllowlistEntries(db: Database.Database): AllowlistEntryRow[]
     value_hash: string
     created_at: string
   }>
+
+  // Reconstruct the live value from any surviving non-purged finding
+  // whose message text we can still read. N is small (the allowlist is
+  // a hand-curated list), so a prepared statement per row is fine.
+  const sessionValueStmt = db.prepare(
+    `SELECT substr(m.content_text, f.start_offset + 1, f.end_offset - f.start_offset) AS value
+       FROM findings f
+       LEFT JOIN messages m ON m.id = f.message_id
+      WHERE f.session_id = ? AND f.kind = ? AND f.value_hash = ?
+        AND f.state != 'purged' AND m.content_text IS NOT NULL
+      LIMIT 1`,
+  )
+  const globalValueStmt = db.prepare(
+    `SELECT substr(m.content_text, f.start_offset + 1, f.end_offset - f.start_offset) AS value
+       FROM findings f
+       LEFT JOIN messages m ON m.id = f.message_id
+      WHERE f.kind = ? AND f.value_hash = ?
+        AND f.state != 'purged' AND m.content_text IS NOT NULL
+      LIMIT 1`,
+  )
+
   return [
     ...globalRows.map((r): AllowlistEntryRow => ({
       scope: 'global',
@@ -711,6 +749,7 @@ export function listAllowlistEntries(db: Database.Database): AllowlistEntryRow[]
       createdAt: r.created_at,
       sessionUuid: null,
       sessionTitle: null,
+      value: (globalValueStmt.get(r.kind, r.value_hash) as { value: string | null } | undefined)?.value ?? null,
     })),
     ...sessionRows.map((r): AllowlistEntryRow => ({
       scope: 'session',
@@ -719,8 +758,22 @@ export function listAllowlistEntries(db: Database.Database): AllowlistEntryRow[]
       createdAt: r.created_at,
       sessionUuid: r.session_uuid,
       sessionTitle: r.session_title,
+      value: (sessionValueStmt.get(r.session_id, r.kind, r.value_hash) as { value: string | null } | undefined)?.value ?? null,
     })),
   ]
+}
+
+/** Total allowlist rows across both scopes. A cheap header badge —
+ *  two `SELECT COUNT(*)` summed, no per-row value reconstruction.
+ *  Use this instead of `listAllowlistEntries().length` for counts. */
+export function countAllowlistEntries(db: Database.Database): number {
+  const session = db.prepare(
+    'SELECT COUNT(*) AS c FROM allowlist_session',
+  ).get() as { c: number }
+  const global = db.prepare(
+    'SELECT COUNT(*) AS c FROM allowlist_global',
+  ).get() as { c: number }
+  return session.c + global.c
 }
 
 // ─── Mutations called from IPC dismiss handlers ───────────────────
@@ -735,8 +788,10 @@ export function dismissFinding(
   recomputeCounts = true,
 ): number | null {
   const f = db.prepare(
-    'SELECT session_id, kind, value_hash FROM findings WHERE id = ?',
-  ).get(findingId) as { session_id: number; kind: string; value_hash: string } | undefined
+    `SELECT session_id, kind, value_hash FROM findings WHERE id = ?`,
+  ).get(findingId) as
+    | { session_id: number; kind: string; value_hash: string }
+    | undefined
   if (!f) return null
   db.prepare(
     `UPDATE findings

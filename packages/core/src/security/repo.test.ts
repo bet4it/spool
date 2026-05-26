@@ -23,6 +23,8 @@ import {
   addAllowlistGlobal,
   removeAllowlistSession,
   removeAllowlistGlobal,
+  listAllowlistEntries,
+  countAllowlistEntries,
   dismissFinding,
   dismissFindings,
   undismissFinding,
@@ -462,6 +464,20 @@ describe('repo: allowlist', () => {
     expect(snap.session.size).toBe(0)
     expect(snap.global.size).toBe(0)
   })
+
+  it('countAllowlistEntries is 0 when empty, sums both scopes, reflects adds/removes', () => {
+    expect(countAllowlistEntries(db)).toBe(0)
+    addAllowlistSession(db, 1, 'email', 'hX')
+    addAllowlistSession(db, 2, 'email', 'hY')
+    addAllowlistGlobal(db, 'api-key', 'gK')
+    expect(countAllowlistEntries(db)).toBe(3)
+    // INSERT OR IGNORE — duplicates don't inflate the count.
+    addAllowlistSession(db, 1, 'email', 'hX')
+    expect(countAllowlistEntries(db)).toBe(3)
+    removeAllowlistGlobal(db, 'api-key', 'gK')
+    removeAllowlistSession(db, 1, 'email', 'hX')
+    expect(countAllowlistEntries(db)).toBe(1)
+  })
 })
 
 describe('repo: dismiss/undismiss flow', () => {
@@ -535,5 +551,57 @@ describe('repo: dismiss/undismiss flow', () => {
     expect(snap.session.size).toBe(0)
     const counts = db.prepare('SELECT scan_finding_count FROM sessions WHERE id = 1').get() as { scan_finding_count: number }
     expect(counts.scan_finding_count).toBe(2)
+  })
+})
+
+describe('repo: allowlist live value reconstruction', () => {
+  let db: Database.Database
+  beforeEach(() => {
+    db = setupDb()
+    insertFindings(db, [
+      // AKIAIOSFODNN7EXAMPLE at [14,34].
+      { sessionId: 1, messageId: 10, kind: 'api-key', valueHash: 'h1', confidence: 0.95, provider: 'regex', startOffset: 14, endOffset: 34, state: 'active' },
+      // a@b.com at [51,58].
+      { sessionId: 1, messageId: 10, kind: 'email', valueHash: 'h2', confidence: 0.8, provider: 'regex', startOffset: 51, endOffset: 58, state: 'active' },
+    ])
+    updateSessionCounts(db, 1)
+  })
+
+  it('allowlist tables carry no preview/reason columns', () => {
+    for (const table of ['allowlist_session', 'allowlist_global']) {
+      const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(c => c.name)
+      expect(cols).not.toContain('preview')
+      expect(cols).not.toContain('reason')
+    }
+  })
+
+  it('session dismiss → listAllowlistEntries reconstructs the live value from the message', () => {
+    const f = listFindings(db, { kind: 'api-key' })[0]!
+    dismissFinding(db, f.id, 'session')
+    const entry = listAllowlistEntries(db).find(e => e.scope === 'session' && e.kind === 'api-key')!
+    expect(entry.value).toBe('AKIAIOSFODNN7EXAMPLE')
+  })
+
+  it('global dismiss → listAllowlistEntries reconstructs the live value (no session filter)', () => {
+    const f = listFindings(db, { kind: 'email' })[0]!
+    dismissFinding(db, f.id, 'global')
+    const entry = listAllowlistEntries(db).find(e => e.scope === 'global' && e.kind === 'email')!
+    expect(entry.value).toBe('a@b.com')
+  })
+
+  it('value is null when the matching finding is purged', () => {
+    const f = listFindings(db, { kind: 'api-key' })[0]!
+    dismissFinding(db, f.id, 'session')
+    // Purge the finding the allowlist value would be reconstructed from.
+    db.prepare(`UPDATE findings SET state = 'purged' WHERE id = ?`).run(f.id)
+    const entry = listAllowlistEntries(db).find(e => e.scope === 'session' && e.kind === 'api-key')!
+    expect(entry.value).toBeNull()
+  })
+
+  it('value is null when no matching finding exists (orphaned allowlist row)', () => {
+    // An allowlist row whose (kind, value_hash) has no surviving finding.
+    addAllowlistGlobal(db, 'phone', 'orphan-hash')
+    const entry = listAllowlistEntries(db).find(e => e.valueHash === 'orphan-hash')!
+    expect(entry.value).toBeNull()
   })
 })

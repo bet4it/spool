@@ -23,6 +23,7 @@ import {
   purgeFinding,
   purgeFindings,
   listAllowlistEntries,
+  countAllowlistEntries,
   removeAllowlistSession,
   removeAllowlistGlobal,
   listBackups,
@@ -74,6 +75,7 @@ export const SECURITY_IPC_CHANNELS = {
 
   // allowlist management
   LIST_ALLOWLIST_ENTRIES:      'security:list-allowlist-entries',
+  COUNT_ALLOWLIST_ENTRIES:     'security:count-allowlist-entries',
   REMOVE_ALLOWLIST_ENTRY:      'security:remove-allowlist-entry',
 
   // maintenance
@@ -210,7 +212,7 @@ export function registerSecurityIpc(deps: SecurityIpcDeps): () => void {
   ipcMain.handle(
     SECURITY_IPC_CHANNELS.DISMISS_FINDING,
     (_e, args: { findingId: number; scope: 'session' | 'global' }) => {
-      const sessionId = dismissFinding(db, args.findingId, args.scope)
+      const sessionId = dismissFinding(db, args.findingId, args.scope, true)
       if (sessionId != null) {
         getMainWindow()?.webContents.send(SECURITY_IPC_CHANNELS.EVT_FINDINGS_CHANGED, {
           type: 'state-changed', sessionId, findingId: args.findingId, state: 'dismissed',
@@ -334,6 +336,7 @@ export function registerSecurityIpc(deps: SecurityIpcDeps): () => void {
   })
 
   ipcMain.handle(SECURITY_IPC_CHANNELS.LIST_ALLOWLIST_ENTRIES, () => listAllowlistEntries(db))
+  ipcMain.handle(SECURITY_IPC_CHANNELS.COUNT_ALLOWLIST_ENTRIES, () => countAllowlistEntries(db))
   ipcMain.handle(
     SECURITY_IPC_CHANNELS.REMOVE_ALLOWLIST_ENTRY,
     (_e, args: { scope: 'session' | 'global'; kind: SensitiveKind; valueHash: string; sessionUuid?: string }) => {

@@ -635,12 +635,12 @@ function ensureSchemaSanity(db: Database.Database): void {
   // Backfill columns the head schema requires but historical DBs (or test
   // fixtures that seed an intentionally-minimal table) may be missing.
   // Each ALTER is a fast no-op when the column already exists.
-  const ensureCol = (col: string, ddl: string): void => {
-    if (!columnExists(db, 'sessions', col)) db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${ddl}`)
+  const ensureCol = (table: string, col: string, ddl: string): void => {
+    if (!columnExists(db, table, col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`)
   }
-  ensureCol('title', 'TEXT')
-  ensureCol('title_source', `TEXT NOT NULL DEFAULT 'derived'`)
-  ensureCol('message_count', 'INTEGER NOT NULL DEFAULT 0')
+  ensureCol('sessions', 'title', 'TEXT')
+  ensureCol('sessions', 'title_source', `TEXT NOT NULL DEFAULT 'derived'`)
+  ensureCol('sessions', 'message_count', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 /**
