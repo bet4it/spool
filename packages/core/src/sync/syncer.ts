@@ -5,6 +5,14 @@ import type Database from 'better-sqlite3'
 import { loadClaudeSession, decodeProjectSlug } from '../parsers/claude.js'
 import { loadCodexSession, CODEX_INDEX_VERSION } from '../parsers/codex.js'
 import { loadGeminiSession } from '../parsers/gemini.js'
+import {
+  getOpenCodeSessionIndexedMtime,
+  isOpenCodeDatabaseFile,
+  listOpenCodeSessionFilePaths,
+  loadOpenCodeSession,
+  OPENCODE_INDEX_VERSION,
+  parseOpenCodeSessionFilePath,
+} from '../parsers/opencode.js'
 import type { SessionSource } from '../types.js'
 import { getSessionRoots, isSessionFileForSource } from './source-paths.js'
 import {
@@ -56,11 +64,13 @@ export class Syncer {
     const seenPaths = new Set<string>()
     const files: Array<{ path: string; source: SessionSource }> = []
 
-    for (const source of ['claude', 'codex', 'gemini'] as const) {
+    for (const source of ['claude', 'codex', 'gemini', 'opencode'] as const) {
       for (const dir of getSessionRoots(source)) {
         try { addUniqueFiles(files, seenPaths, collectSessionFiles(dir, source)) } catch { /* dir may not exist */ }
       }
     }
+
+    cleanupStaleOpenCodeSessions(this.db, files)
 
     const knownMtimes = getAllSessionMtimes(this.db)
     this.codexTitleIndex = loadCodexSessionIndex()
@@ -153,6 +163,10 @@ export class Syncer {
 
   syncFile(filePath: string, source: SessionSource, knownMtimes?: Map<string, string>, precomputedMtime?: string): 'added' | 'updated' | 'skipped' | 'error' {
     try {
+      if (source === 'opencode' && isOpenCodeDatabaseFile(filePath)) {
+        return this.syncOpenCodeDatabase(filePath, knownMtimes)
+      }
+
       const mtime = precomputedMtime ?? getIndexedMtime(filePath, source)
       const existingMtime = knownMtimes
         ? (knownMtimes.get(filePath) ?? null)
@@ -163,7 +177,9 @@ export class Syncer {
         ? loadClaudeSession(filePath)
         : source === 'codex'
           ? loadCodexSession(filePath)
-          : loadGeminiSession(filePath)
+          : source === 'gemini'
+            ? loadGeminiSession(filePath)
+            : loadOpenCodeSession(filePath)
 
       if (parseResult.kind !== 'parsed') {
         if (parseResult.kind === 'filtered' && existingMtime !== null) {
@@ -259,6 +275,81 @@ export class Syncer {
       return 'error'
     }
   }
+
+  private syncOpenCodeDatabase(dbPath: string, knownMtimes?: Map<string, string>): 'added' | 'updated' | 'skipped' | 'error' {
+    let changed = false
+    let hadError = false
+
+    let sessionPaths: string[]
+    try {
+      sessionPaths = listOpenCodeSessionFilePaths(dbPath)
+    } catch (err) {
+      try {
+        const sourceRow = this.db
+          .prepare('SELECT id FROM sources WHERE name = ?')
+          .get('opencode') as { id: number } | undefined
+        if (sourceRow) {
+          this.db.prepare(`
+            INSERT INTO sync_log (source_id, file_path, status, message)
+            VALUES (?, ?, 'error', ?)
+          `).run(sourceRow.id, dbPath, String(err))
+        }
+      } catch { /* ignore log errors */ }
+      return 'error'
+    }
+
+    for (const sessionPath of sessionPaths) {
+      const result = this.syncFile(sessionPath, 'opencode', knownMtimes)
+      if (result === 'added' || result === 'updated') changed = true
+      else if (result === 'error') hadError = true
+    }
+
+    const activePaths = new Set(sessionPaths)
+    const stalePaths = listIndexedOpenCodeSessionPaths(this.db)
+      .filter(path => parseOpenCodeSessionFilePath(path)?.dbPath === dbPath)
+      .filter(path => !activePaths.has(path))
+    for (const stalePath of stalePaths) {
+      if (deleteSessionByFilePath(this.db, stalePath)) changed = true
+    }
+
+    if (changed) return 'updated'
+    if (hadError) return 'error'
+    return 'skipped'
+  }
+}
+
+function cleanupStaleOpenCodeSessions(
+  db: Database.Database,
+  files: Array<{ path: string; source: SessionSource }>,
+): void {
+  const activePathsByDb = new Map<string, Set<string>>()
+  for (const file of files) {
+    if (file.source !== 'opencode') continue
+    const parsed = parseOpenCodeSessionFilePath(file.path)
+    if (!parsed) continue
+    const paths = activePathsByDb.get(parsed.dbPath) ?? new Set<string>()
+    paths.add(file.path)
+    activePathsByDb.set(parsed.dbPath, paths)
+  }
+  if (activePathsByDb.size === 0) return
+
+  for (const indexedPath of listIndexedOpenCodeSessionPaths(db)) {
+    const parsed = parseOpenCodeSessionFilePath(indexedPath)
+    if (!parsed) continue
+    const activePaths = activePathsByDb.get(parsed.dbPath)
+    if (!activePaths || activePaths.has(indexedPath)) continue
+    deleteSessionByFilePath(db, indexedPath)
+  }
+}
+
+function listIndexedOpenCodeSessionPaths(db: Database.Database): string[] {
+  const rows = db.prepare(`
+    SELECT s.file_path AS filePath
+    FROM sessions s
+    JOIN sources src ON src.id = s.source_id
+    WHERE src.name = 'opencode'
+  `).all() as Array<{ filePath: string }>
+  return rows.map(row => row.filePath)
 }
 
 function addUniqueFiles(
@@ -278,12 +369,14 @@ function getMtime(filePath: string): string {
 }
 
 function getIndexedMtime(filePath: string, source: SessionSource): string {
+  if (source === 'opencode') return getOpenCodeSessionIndexedMtime(filePath)
   return `${getMtime(filePath)}::${getIndexVersion(source)}`
 }
 
 function getIndexVersion(source: SessionSource): string {
   if (source === 'codex') return CODEX_INDEX_VERSION
   if (source === 'gemini') return 'gemini-v1-session-search-fts'
+  if (source === 'opencode') return OPENCODE_INDEX_VERSION
   return 'claude-v3-session-search-fts'
 }
 
@@ -291,6 +384,12 @@ function collectSessionFiles(
   dir: string,
   source: SessionSource,
 ): Array<{ path: string; source: SessionSource }> {
+  if (source === 'opencode') {
+    const dbPath = join(dir, 'opencode.db')
+    if (!existsSync(dbPath)) return []
+    return listOpenCodeSessionFilePaths(dbPath).map(path => ({ path, source }))
+  }
+
   const results: Array<{ path: string; source: SessionSource }> = []
   walkDir(dir, dir, results, source)
   return results
@@ -373,6 +472,12 @@ function resolveProject(
     const displayPath = cwd || home
     const parts = displayPath.split('/').filter(Boolean)
     const displayName = parts[parts.length - 1] ?? 'codex'
+    const slug = displayPath.replace(/^\//, '').replace(/\//g, '-') || 'default'
+    return { slug, displayPath, displayName }
+  } else if (source === 'opencode') {
+    const displayPath = cwd || home
+    const parts = displayPath.split('/').filter(Boolean)
+    const displayName = parts[parts.length - 1] ?? 'opencode'
     const slug = displayPath.replace(/^\//, '').replace(/\//g, '-') || 'default'
     return { slug, displayPath, displayName }
   }

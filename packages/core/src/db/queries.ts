@@ -52,9 +52,10 @@ export function getOrCreateAskProject(db: Database.Database, source: SessionSour
 
 /**
  * Insert a session row authored by Spool itself (e.g. agent search). Title is
- * locked via title_source='spool' so subsequent sync of the source-side JSONL
- * won't overwrite it. file_path uses a sentinel ('spool:pending:<uuid>') that
- * upsertSession rebinds to the real path when sync first sees the JSONL.
+ * locked via title_source='spool' so subsequent sync of the source-side
+ * session record won't overwrite it. file_path uses a sentinel
+ * ('spool:pending:<uuid>') that upsertSession rebinds to the real path when
+ * sync first sees the persisted source session.
  *
  * Idempotent: if a row with the same session_uuid already exists, returns its
  * id without modifying anything.
@@ -144,7 +145,7 @@ export function upsertSession(
     }
     db.prepare('DELETE FROM messages WHERE session_id = ?').run(existing.id)
     // file_path is updated too: Spool-authored sessions start with a sentinel
-    // ('spool:pending:<uuid>') and get rebound to the real JSONL path here on
+    // ('spool:pending:<uuid>') and get rebound to the real source path here on
     // first sync. For normal sessions this is a no-op (same path).
     db.prepare(`
       UPDATE sessions SET
@@ -267,7 +268,8 @@ export function getSessionWithMessages(
            parent_uuid AS parentUuid, role, content_text AS contentText,
            timestamp, is_sidechain AS isSidechain, tool_names AS toolNames, seq
     FROM messages
-    WHERE session_id = ? AND is_sidechain = 0
+    WHERE session_id = ?
+      AND (is_sidechain = 0 OR parent_uuid LIKE 'opencode-subagent:%')
     ORDER BY seq
   `).all(session.id) as Array<Record<string, unknown>>
 
@@ -982,6 +984,7 @@ export function getStatus(db: Database.Database): StatusInfo {
   const claudeRow = counts.find(r => r.name === 'claude')
   const codexRow = counts.find(r => r.name === 'codex')
   const geminiRow = counts.find(r => r.name === 'gemini')
+  const opencodeRow = counts.find(r => r.name === 'opencode')
 
   return {
     dbPath: DB_PATH,
@@ -989,6 +992,7 @@ export function getStatus(db: Database.Database): StatusInfo {
     claudeSessions: claudeRow?.cnt ?? 0,
     codexSessions: codexRow?.cnt ?? 0,
     geminiSessions: geminiRow?.cnt ?? 0,
+    opencodeSessions: opencodeRow?.cnt ?? 0,
     lastSyncedAt: lastSync?.last ?? null,
     dbSizeBytes: getDBSize(),
   }
@@ -1022,4 +1026,3 @@ function getProfileLabelFromFilePath(filePath: string): string | undefined {
   const match = filePath.match(/\/\.(?:claude|codex)-profiles\/([^/]+)\//)
   return match?.[1]
 }
-

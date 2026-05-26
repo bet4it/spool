@@ -3,6 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import type { Syncer } from './syncer.js'
 import type { SessionSource } from '../types.js'
 import { detectSessionSource, getSessionRoots } from './source-paths.js'
+import { normalizeOpenCodeWatchPath } from '../parsers/opencode.js'
 
 export type WatcherEvent = 'new-sessions' | 'error'
 
@@ -45,7 +46,7 @@ export class SpoolWatcher {
   private pending: Map<string, PendingEntry> = new Map()
   private pendingNew = 0
   private flushTimer: ReturnType<typeof setTimeout> | null = null
-  private sourceRoots: Record<SessionSource, string[]> = { claude: [], codex: [], gemini: [] }
+  private sourceRoots: Record<SessionSource, string[]> = { claude: [], codex: [], gemini: [], opencode: [] }
   private stopped = false
   private readonly stabilityMs: number
   private readonly pollMs: number
@@ -65,11 +66,13 @@ export class SpoolWatcher {
       claude: getSessionRoots('claude'),
       codex: getSessionRoots('codex'),
       gemini: getSessionRoots('gemini'),
+      opencode: getSessionRoots('opencode'),
     }
     const roots = [
       ...this.sourceRoots.claude,
       ...this.sourceRoots.codex,
       ...this.sourceRoots.gemini,
+      ...this.sourceRoots.opencode,
     ]
     for (const root of roots) this.watchRoot(root)
   }
@@ -110,7 +113,10 @@ export class SpoolWatcher {
 
     w.on('change', (_eventType, filename) => {
       if (this.stopped || !filename) return
-      const abs = resolvePath(root, filename.toString())
+      // OpenCode commits land in opencode.db-wal; map sidecar writes to the main
+      // DB so they aren't filtered out and trigger a re-index. Stability polling
+      // then debounces on the (static) main file, settling once writes pause.
+      const abs = normalizeOpenCodeWatchPath(resolvePath(root, filename.toString()))
       this.schedulePoll(abs)
     })
 
