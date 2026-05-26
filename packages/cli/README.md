@@ -30,11 +30,33 @@ spool show <uuid> --json       # Output as JSON
 spool status                   # Show index stats (session count, DB size)
 ```
 
+### Pin
+
+```bash
+spool pin <uuid>               # Pin a session to the top of your library
+spool unpin <uuid>             # Remove a session from the pinned list
+spool pinned                   # List pinned sessions
+spool pinned --json            # Output as JSON
+```
+
+Pins are shared with the Spool desktop app — pinning here surfaces the
+session in the app's library on its next refresh, and vice versa.
+
 ### Sync
 
 ```bash
 spool sync                     # Index new AI sessions (Claude, Codex, Gemini)
 spool sync --watch             # Keep watching for new sessions
+```
+
+### Doctor
+
+```bash
+spool doctor                   # Diagnose your environment, database, and config
+spool doctor db.integrity      # Run a single check by id
+spool doctor --json            # Machine-readable output
+spool doctor --fix             # Apply safe fixes for failing checks
+spool doctor --fix --force     # Also apply destructive fixes
 ```
 
 ## Data location
