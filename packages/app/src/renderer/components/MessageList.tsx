@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
@@ -174,6 +174,14 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
   const { t, i18n } = useTranslation()
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const [expandedSidechains, setExpandedSidechains] = useState<Set<string>>(() => new Set())
+  const [virtuosoScroller, setVirtuosoScroller] = useState<HTMLElement | null>(null)
+  const [scrollbarSyncNonce, setScrollbarSyncNonce] = useState(0)
+  const bindVirtuosoScroller = useCallback((ref: HTMLElement | Window | null) => {
+    setVirtuosoScroller(ref instanceof HTMLElement ? ref : null)
+  }, [])
+  const requestScrollbarSync = useCallback(() => {
+    setScrollbarSyncNonce((value) => value + 1)
+  }, [])
 
   const dividerLabel = useMemo(
     () => makeDividerLabel(t('session.divider_today'), t('session.divider_yesterday'), i18n.language),
@@ -216,6 +224,19 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
     },
   }), [idToRowIndex])
 
+  // Custom scrollbar maps thumb position → row index → Virtuoso scrollToIndex.
+  // We can't use scrollTop directly because Virtuoso estimates scrollHeight
+  // from defaultItemHeight; real rows (markdown bubbles) are usually taller,
+  // so a pixel-ratio map can't reach the actual top/bottom until rows measure.
+  const rowCount = rows.length
+  const scrollToRatio = useCallback((ratio: number) => {
+    const handle = virtuosoRef.current
+    if (!handle || rowCount === 0) return
+    const clamped = Math.max(0, Math.min(1, ratio))
+    const index = Math.round(clamped * (rowCount - 1))
+    handle.scrollToIndex({ index, align: 'start', behavior: 'auto' })
+  }, [rowCount])
+
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-warm-faint dark:text-dark-muted">
@@ -224,130 +245,277 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
     )
   }
 
-  return (
-    <Virtuoso
-      ref={virtuosoRef}
-      data={rows}
-      computeItemKey={(_index, row) => row.kind === 'msg' ? `m-${row.msg.id}` : row.key}
-      defaultItemHeight={64}
-      {...(initialIndex ? { initialTopMostItemIndex: initialIndex } : {})}
-      increaseViewportBy={400}
-      data-testid="message-list-scroll"
-      className="flex-1 [mask-image:linear-gradient(to_bottom,black_calc(100%_-_24px),transparent)]"
-      itemContent={(index, row) => {
-        if (row.kind === 'divider') {
-          return (
-            <div
-              data-index={index}
-              data-testid="day-divider"
-              data-day={row.isoDay}
-              className="px-6 pt-5 pb-2 flex items-center gap-3 select-none"
-            >
-              <span className="flex-1 h-px bg-warm-border dark:bg-dark-border" />
-              <span className="text-[10px] font-semibold tracking-[0.08em] uppercase text-warm-faint dark:text-dark-muted">
-                {row.label}
-              </span>
-              <span className="flex-1 h-px bg-warm-border dark:bg-dark-border" />
-            </div>
-          )
-        }
-        if (row.kind === 'sidechain') {
-          const rowHasFindMatch = showFindBar && hasFindMatch(row.messages, messageFindRanges)
-          const rowHasTarget = targetMessageId != null && row.messages.some(message => message.id === targetMessageId)
-          const expanded = expandedSidechains.has(row.key) || rowHasFindMatch || rowHasTarget
-          const rowTime = formatRowTime(row.timestamp, i18n.language)
+  const renderRowContent = (index: number, row: Row) => {
+    if (row.kind === 'divider') {
+      return (
+        <div
+          data-index={index}
+          data-testid="day-divider"
+          data-day={row.isoDay}
+          className="px-6 pt-5 pb-2 flex items-center gap-3 select-none"
+        >
+          <span className="flex-1 h-px bg-warm-border dark:bg-dark-border" />
+          <span className="text-[10px] font-semibold tracking-[0.08em] uppercase text-warm-faint dark:text-dark-muted">
+            {row.label}
+          </span>
+          <span className="flex-1 h-px bg-warm-border dark:bg-dark-border" />
+        </div>
+      )
+    }
+    if (row.kind === 'sidechain') {
+      const rowHasFindMatch = showFindBar && hasFindMatch(row.messages, messageFindRanges)
+      const rowHasTarget = targetMessageId != null && row.messages.some(message => message.id === targetMessageId)
+      const expanded = expandedSidechains.has(row.key) || rowHasFindMatch || rowHasTarget
+      const rowTime = formatRowTime(row.timestamp, i18n.language)
 
-          return (
-            <div data-index={index} className="px-6 py-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setExpandedSidechains((current) => {
-                    const next = new Set(current)
-                    if (next.has(row.key)) next.delete(row.key)
-                    else next.add(row.key)
-                    return next
-                  })
-                }}
-                className="w-full min-w-0 flex items-center gap-2 rounded-md border border-warm-border dark:border-dark-border bg-warm-surface/70 dark:bg-dark-surface/70 px-3 py-2 text-left hover:bg-warm-surface2 dark:hover:bg-dark-surface2 transition-colors"
-              >
-                {expanded ? (
-                  <ChevronDown size={14} strokeWidth={1.8} className="flex-none text-warm-faint dark:text-dark-muted" aria-hidden />
-                ) : (
-                  <ChevronRight size={14} strokeWidth={1.8} className="flex-none text-warm-faint dark:text-dark-muted" aria-hidden />
-                )}
-                <span className="flex-1 min-w-0 truncate text-xs font-medium text-warm-muted dark:text-dark-muted">
-                  {row.label}
-                </span>
-                <span className="flex-none text-[10px] font-mono text-warm-faint dark:text-dark-muted">
-                  {t('session.messages_other', { count: row.messages.length })}
-                  {rowTime ? ` · ${rowTime}` : ''}
-                </span>
-              </button>
-
-              {expanded && (
-                <div className="mt-2 ml-2 border-l border-warm-border dark:border-dark-border">
-                  {row.messages.map((message, messageIndex) => {
-                    const matchState = showFindBar ? messageFindRanges.get(message.id) : undefined
-                    const containsActive = matchState != null
-                      && activeMatchIndex >= matchState.offset
-                      && activeMatchIndex < matchState.offset + matchState.ranges.length
-                    const isTarget = message.id === targetMessageId
-
-                    return (
-                      <div
-                        key={message.id}
-                        {...(isTarget ? { 'data-testid': 'target-message' } : {})}
-                        {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
-                        className={`transition-colors duration-700 ${
-                          isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
-                        }`}
-                      >
-                        <MessageBubble
-                          message={message}
-                          isDark={isDark}
-                          showAvatar={shouldShowAvatarInGroup(row.messages, messageIndex)}
-                          {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
-                          activeMatchIndex={containsActive ? activeMatchIndex : -1}
-                          {...(containsActive ? { onActiveMatchRef } : {})}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        }
-        const msg = row.msg
-        const matchState = showFindBar ? messageFindRanges.get(msg.id) : undefined
-        const containsActive = matchState != null
-          && activeMatchIndex >= matchState.offset
-          && activeMatchIndex < matchState.offset + matchState.ranges.length
-        const isTarget = msg.id === targetMessageId
-
-        return (
-          <div
-            data-index={index}
-            {...(isTarget ? { 'data-testid': 'target-message' } : {})}
-            {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
-            className={`transition-colors duration-700 ${
-              isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
-            }`}
+      return (
+        <div data-index={index} className="px-6 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              setExpandedSidechains((current) => {
+                const next = new Set(current)
+                if (next.has(row.key)) next.delete(row.key)
+                else next.add(row.key)
+                return next
+              })
+            }}
+            className="w-full min-w-0 flex items-center gap-2 rounded-md border border-warm-border dark:border-dark-border bg-warm-surface/70 dark:bg-dark-surface/70 px-3 py-2 text-left hover:bg-warm-surface2 dark:hover:bg-dark-surface2 transition-colors"
           >
-            <MessageBubble
-              message={msg}
-              isDark={isDark}
-              showAvatar={row.showAvatar}
-              {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
-              activeMatchIndex={containsActive ? activeMatchIndex : -1}
-              {...(containsActive ? { onActiveMatchRef } : {})}
-            />
-          </div>
-        )
-      }}
-    />
+            {expanded ? (
+              <ChevronDown size={14} strokeWidth={1.8} className="flex-none text-warm-faint dark:text-dark-muted" aria-hidden />
+            ) : (
+              <ChevronRight size={14} strokeWidth={1.8} className="flex-none text-warm-faint dark:text-dark-muted" aria-hidden />
+            )}
+            <span className="flex-1 min-w-0 truncate text-xs font-medium text-warm-muted dark:text-dark-muted">
+              {row.label}
+            </span>
+            <span className="flex-none text-[10px] font-mono text-warm-faint dark:text-dark-muted">
+              {t('session.messages_other', { count: row.messages.length })}
+              {rowTime ? ` · ${rowTime}` : ''}
+            </span>
+          </button>
+
+          {expanded && (
+            <div className="mt-2 ml-2 border-l border-warm-border dark:border-dark-border">
+              {row.messages.map((message, messageIndex) => {
+                const matchState = showFindBar ? messageFindRanges.get(message.id) : undefined
+                const containsActive = matchState != null
+                  && activeMatchIndex >= matchState.offset
+                  && activeMatchIndex < matchState.offset + matchState.ranges.length
+                const isTarget = message.id === targetMessageId
+
+                return (
+                  <div
+                    key={message.id}
+                    data-message-id={message.id}
+                    {...(isTarget ? { 'data-testid': 'target-message' } : {})}
+                    {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
+                    className={`transition-colors duration-700 ${
+                      isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
+                    }`}
+                  >
+                    <MessageBubble
+                      message={message}
+                      isDark={isDark}
+                      showAvatar={shouldShowAvatarInGroup(row.messages, messageIndex)}
+                      {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
+                      activeMatchIndex={containsActive ? activeMatchIndex : -1}
+                      {...(containsActive ? { onActiveMatchRef } : {})}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )
+    }
+    const msg = row.msg
+    const matchState = showFindBar ? messageFindRanges.get(msg.id) : undefined
+    const containsActive = matchState != null
+      && activeMatchIndex >= matchState.offset
+      && activeMatchIndex < matchState.offset + matchState.ranges.length
+    const isTarget = msg.id === targetMessageId
+
+    return (
+      <div
+        data-index={index}
+        data-message-id={msg.id}
+        {...(isTarget ? { 'data-testid': 'target-message' } : {})}
+        {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
+        className={`transition-colors duration-700 ${
+          isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
+        }`}
+      >
+        <MessageBubble
+          message={msg}
+          isDark={isDark}
+          showAvatar={row.showAvatar}
+          {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
+          activeMatchIndex={containsActive ? activeMatchIndex : -1}
+          {...(containsActive ? { onActiveMatchRef } : {})}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative flex-1 min-h-0">
+      <Virtuoso
+        ref={virtuosoRef}
+        scrollerRef={bindVirtuosoScroller}
+        data={rows}
+        computeItemKey={(_index, row) => row.kind === 'msg' ? `m-${row.msg.id}` : row.key}
+        defaultItemHeight={64}
+        {...(initialIndex ? { initialTopMostItemIndex: initialIndex } : {})}
+        increaseViewportBy={400}
+        totalListHeightChanged={requestScrollbarSync}
+        data-testid="message-list-scroll"
+        className="h-full scrollbar-none [mask-image:linear-gradient(to_bottom,black_calc(100%_-_24px),transparent)]"
+        itemContent={renderRowContent}
+      />
+      <MessageScrollbar
+        scroller={virtuosoScroller}
+        syncNonce={scrollbarSyncNonce}
+        scrollToRatio={scrollToRatio}
+      />
+    </div>
   )
 })
 
 export default MessageList
+
+function MessageScrollbar({
+  scroller,
+  syncNonce,
+  scrollToRatio,
+}: {
+  scroller: HTMLElement | null
+  syncNonce: number
+  scrollToRatio: (ratio: number) => void
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const draggingRef = useRef(false)
+  const activeDragRef = useRef<{ move: (event: PointerEvent) => void; up: () => void } | null>(null)
+  const [metrics, setMetrics] = useState({
+    clientHeight: 0,
+    scrollHeight: 0,
+    scrollTop: 0,
+  })
+  const [dragThumbTop, setDragThumbTop] = useState<number | null>(null)
+
+  useEffect(() => () => {
+    const active = activeDragRef.current
+    if (!active) return
+    window.removeEventListener('pointermove', active.move)
+    window.removeEventListener('pointerup', active.up)
+    window.removeEventListener('pointercancel', active.up)
+    activeDragRef.current = null
+  }, [])
+
+  const syncMetrics = useCallback(() => {
+    if (!scroller || draggingRef.current) return
+    const next = {
+      clientHeight: scroller.clientHeight,
+      scrollHeight: scroller.scrollHeight,
+      scrollTop: scroller.scrollTop,
+    }
+    setMetrics((prev) => {
+      if (
+        prev.clientHeight === next.clientHeight &&
+        prev.scrollHeight === next.scrollHeight &&
+        prev.scrollTop === next.scrollTop
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [scroller])
+
+  useEffect(() => {
+    if (!scroller) return
+    syncMetrics()
+    scroller.addEventListener('scroll', syncMetrics, { passive: true })
+
+    const observer = new ResizeObserver(() => syncMetrics())
+    observer.observe(scroller)
+    const content = scroller.firstElementChild
+    if (content) observer.observe(content)
+
+    return () => {
+      scroller.removeEventListener('scroll', syncMetrics)
+      observer.disconnect()
+    }
+  }, [scroller, syncMetrics])
+
+  useEffect(() => {
+    syncMetrics()
+  }, [syncMetrics, syncNonce])
+
+  if (!scroller || metrics.scrollHeight <= metrics.clientHeight || metrics.clientHeight === 0) {
+    return null
+  }
+
+  const trackInset = 4
+  const trackHeight = Math.max(0, metrics.clientHeight - trackInset * 2)
+  const thumbHeight = Math.max(24, Math.round((metrics.clientHeight / metrics.scrollHeight) * trackHeight))
+  const maxThumbTop = Math.max(0, trackHeight - thumbHeight)
+  const maxScrollTop = Math.max(1, metrics.scrollHeight - metrics.clientHeight)
+  const syncedThumbTop = Math.round((metrics.scrollTop / maxScrollTop) * maxThumbTop)
+  const thumbTop = dragThumbTop ?? syncedThumbTop
+
+  const scrollToThumbTop = (top: number) => {
+    const nextTop = Math.max(0, Math.min(maxThumbTop, top))
+    setDragThumbTop(nextTop)
+    scrollToRatio(maxThumbTop === 0 ? 0 : nextTop / maxThumbTop)
+  }
+
+  return (
+    <div
+      ref={trackRef}
+      data-testid="message-scrollbar-track"
+      className="absolute right-0 top-1 bottom-1 w-3 z-10"
+      aria-hidden
+      onPointerDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        const rect = event.currentTarget.getBoundingClientRect()
+        scrollToThumbTop(event.clientY - rect.top - thumbHeight / 2)
+      }}
+    >
+      <div
+        data-testid="message-scrollbar-thumb"
+        className="absolute right-0.5 w-2 rounded-full bg-[var(--spool-scrollbar-thumb)] hover:bg-[var(--spool-scrollbar-thumb-hover)]"
+        style={{ height: thumbHeight, transform: `translateY(${thumbTop}px)` }}
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          draggingRef.current = true
+          const trackRect = trackRef.current?.getBoundingClientRect()
+          const grabOffset = trackRect ? event.clientY - trackRect.top - thumbTop : 0
+
+          const handlePointerMove = (moveEvent: PointerEvent) => {
+            const rect = trackRef.current?.getBoundingClientRect()
+            if (!rect) return
+            scrollToThumbTop(moveEvent.clientY - rect.top - grabOffset)
+          }
+
+          const handlePointerUp = () => {
+            draggingRef.current = false
+            setDragThumbTop(null)
+            syncMetrics()
+            window.removeEventListener('pointermove', handlePointerMove)
+            window.removeEventListener('pointerup', handlePointerUp)
+            window.removeEventListener('pointercancel', handlePointerUp)
+            activeDragRef.current = null
+          }
+
+          activeDragRef.current = { move: handlePointerMove, up: handlePointerUp }
+          window.addEventListener('pointermove', handlePointerMove)
+          window.addEventListener('pointerup', handlePointerUp)
+          window.addEventListener('pointercancel', handlePointerUp)
+        }}
+      />
+    </div>
+  )
+}
