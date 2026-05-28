@@ -17,7 +17,7 @@ export default defineConfig({
   // CPU headroom — keep workers=2 there for the e2e macOS speedup.
   workers: process.env['CI'] && process.platform === 'linux' ? 1 : 2,
   reporter: process.env['CI']
-    ? [['list'], ['html', { open: 'never', outputFolder: '../test-results/html-report' }]]
+    ? [['list'], ['html', { open: 'never', outputFolder: 'html-report' }]]
     : [['list']],
   use: {
     trace: 'retain-on-failure',
