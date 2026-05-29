@@ -24,6 +24,9 @@ import {
   upsertSession,
   upsertSessionSearch,
   insertMessages,
+  getMessageSnapshot,
+  recomputeMessageCount,
+  type UpsertSessionMode,
 } from '../db/queries.js'
 import type { ParsedMessage, SyncResult } from '../types.js'
 import { computeIdentity } from '../projects/identity.js'
@@ -148,6 +151,72 @@ export class Syncer {
     return { added, updated, errors }
   }
 
+  /** Decide whether a re-sync of `sessionUuid` against `parsed` is a
+   *  pure append (existing rows untouched, new uuids inserted) or
+   *  needs the safer DELETE+INSERT rewrite path.
+   *
+   *  Rewrite signals (any of):
+   *    - Session row doesn't exist yet → trivially a first-sync,
+   *      collapsed into `rewrite` because the code paths are
+   *      identical when there's nothing to preserve.
+   *    - Session row exists but has no msg_uuid-bearing message rows
+   *      (orphan / corrupt state) → safest to repopulate from scratch.
+   *    - Parser returned no messages but DB has some — almost certainly
+   *      a parse failure mid-flight; rewrite would wipe data the
+   *      source no longer has, which is the user's intent.
+   *    - Parser returned fewer messages than DB has — source was
+   *      truncated or rewritten from its head; uuids beyond the new
+   *      tail are stale and must be re-derived.
+   *    - The first stored uuid no longer matches the parser's first
+   *      uuid → leading prefix shifted; preserved tail uuids could
+   *      now point at semantically-different records.
+   *
+   *  Anything else is `append`.
+   *
+   *  Note: we deliberately do NOT auto-detect in-place edits of an
+   *  existing message uuid (same uuid, different content_text on the
+   *  source side). Two reasons:
+   *
+   *    1. Source files for every supported provider (claude / codex /
+   *       gemini / opencode) are append-only event logs at the tool
+   *       contract level. Real in-place edits only happen when a user
+   *       manually edits the jsonl on disk — rare, deliberate, and
+   *       best handled by an explicit "Refresh from source" action.
+   *    2. After a Security Scan purge, `messages.content_text` is the
+   *       mask but the source still has the raw value. A naive
+   *       content-compare would see the difference and trigger
+   *       rewrite, which would cascade-delete the finding and let the
+   *       raw value re-enter the DB — exactly the regression that
+   *       motivated this work. The purge protection requires that we
+   *       NOT chase content drift on uuid-matched messages. */
+  private classifySync(
+    sessionUuid: string,
+    parsed: ParsedMessage[],
+  ): UpsertSessionMode {
+    // One join'd query — covers "session row missing", "session row
+    // exists with no messages", and the leading-uuid / total-row
+    // signals all at once. See getMessageSnapshot for the rationale.
+    const snapshot = getMessageSnapshot(this.db, sessionUuid)
+    if (snapshot.total === 0) return 'rewrite'
+    if (parsed.length === 0) return 'rewrite'
+    if (parsed.length < snapshot.total) return 'rewrite'
+    if (parsed[0]!.uuid !== snapshot.firstUuid) return 'rewrite'
+    return 'append'
+  }
+
+  /** True if the title we'd write differs from what's currently stored
+   *  for this session. Lets the syncer skip the session_search rebuild
+   *  on no-op mtime touches without losing title-only updates (e.g.
+   *  codex's auto-titling pass via applyCodexTitles, or a claude
+   *  custom-title record landing while everything else stays the
+   *  same). */
+  private titleDiffersFromStored(sessionId: number, nextTitle: string): boolean {
+    const row = this.db
+      .prepare('SELECT title FROM sessions WHERE id = ?')
+      .get(sessionId) as { title: string | null } | undefined
+    return (row?.title ?? '') !== nextTitle
+  }
+
   private applyCodexTitles(): void {
     if (this.codexTitleIndex.size === 0) return
     const stmt = this.db.prepare(
@@ -216,7 +285,15 @@ export class Syncer {
       const isNew = existingMtime === null
       const hasToolUse = parsed.messages.some(m => m.toolNames.length > 0)
 
+      // Classify the sync before we touch anything. The result decides
+      // whether existing message rows survive (`append`) or get
+      // DELETE-cascaded by upsertSession (`rewrite`). The
+      // `first-sync` case is just `rewrite` semantically — there is
+      // nothing to preserve.
+      const mode = this.classifySync(parsed.sessionUuid, parsed.messages)
+
       let committedSessionId: number | null = null
+      let insertedCount = 0
       this.db.transaction(() => {
         const sessionId = upsertSession(this.db, {
           projectId,
@@ -231,23 +308,54 @@ export class Syncer {
           cwd: parsed.cwd,
           model: parsed.model,
           rawFileMtime: mtime,
-        })
+        }, mode)
 
-        insertMessages(this.db, sessionId, sourceId, parsed.messages)
-        upsertSessionSearch(this.db, {
-          sessionId,
-          title: parsed.title,
-          userText: buildSessionSearchText(parsed.messages, 'user'),
-          assistantText: buildSessionSearchText(parsed.messages, 'assistant'),
-        })
+        insertedCount = insertMessages(this.db, sessionId, sourceId, parsed.messages)
 
-        // Security Scan cascade: messages.content_text changed, so any
-        // existing findings now have stale offsets. Drop scan_profile
-        // inside the same transaction so a crash between here and the
-        // worker re-enqueue still leaves the session in "needs scan".
-        this.db.prepare(
-          `UPDATE sessions SET scan_profile = NULL, scan_completed_at = NULL WHERE id = ?`,
-        ).run(sessionId)
+        // True only when something we wrote could matter to downstream
+        // consumers — a rewrite always counts (DELETE invalidated
+        // every finding's offsets), an append counts only when at
+        // least one row landed.
+        const contentChanged = mode === 'rewrite' || insertedCount > 0
+
+        if (contentChanged) {
+          // Keep `sessions.message_count` honest with the deduped DB
+          // truth (claude tool-use shadow records would inflate the
+          // parser-derived value back to pre-v14 levels). Gated on
+          // contentChanged so no-op syncs don't pay the UPDATE.
+          recomputeMessageCount(this.db, sessionId)
+        }
+
+        // Session-level search index. **Read content from the DB,
+        // not from `parsed.messages`** — Security Scan purge masks
+        // `messages.content_text` but never touches the source jsonl.
+        // Building search text from the parser output would re-index
+        // the raw secret in session_search_fts on every re-sync of an
+        // active session, leaking the purged value back into the
+        // "search across sessions" surface. Reading from DB instead
+        // makes session_search_fts a faithful projection of what
+        // messages_fts already protects. Skip on no-op re-syncs of an
+        // unchanged title — nothing to refresh.
+        const titleChanged = this.titleDiffersFromStored(sessionId, parsed.title)
+        if (contentChanged || titleChanged) {
+          upsertSessionSearch(this.db, {
+            sessionId,
+            title: parsed.title,
+            userText: buildSessionSearchTextFromDb(this.db, sessionId, 'user'),
+            assistantText: buildSessionSearchTextFromDb(this.db, sessionId, 'assistant'),
+          })
+        }
+
+        // Security Scan cascade — invalidate scan_profile so the
+        // worker re-enqueues this session. Same gate as content
+        // change above; idle mtime touches stay no-ops, which is the
+        // load-bearing UX win that lets purge / dismiss / star
+        // survive across re-sync of an unchanged source file.
+        if (contentChanged) {
+          this.db.prepare(
+            `UPDATE sessions SET scan_profile = NULL, scan_completed_at = NULL WHERE id = ?`,
+          ).run(sessionId)
+        }
 
         this.db.prepare(`
           INSERT INTO sync_log (source_id, file_path, status)
@@ -256,7 +364,8 @@ export class Syncer {
         committedSessionId = sessionId
       })()
 
-      if (committedSessionId !== null && this.onSessionChanged) {
+      const contentChanged = mode === 'rewrite' || insertedCount > 0
+      if (committedSessionId !== null && this.onSessionChanged && contentChanged) {
         try { this.onSessionChanged(committedSessionId) } catch { /* swallow callback errors */ }
       }
       return isNew ? 'added' : 'updated'
@@ -444,10 +553,24 @@ function loadCodexSessionIndex(): Map<string, string> {
   return titles
 }
 
-function buildSessionSearchText(messages: ParsedMessage[], role: 'user' | 'assistant'): string {
-  return messages
-    .filter(message => !message.isSidechain && message.role === role)
-    .map(message => message.contentText.trim())
+/** Build the per-role text that backs `session_search_fts`, reading
+ *  from `messages.content_text` so that Security Scan purge masks are
+ *  honoured. The legacy `buildSessionSearchText(parsed.messages, …)`
+ *  shape pulled directly from the parser output (i.e. from the source
+ *  jsonl which still contains the raw secret), which leaked purged
+ *  values back into the session-level FTS on every re-sync. */
+function buildSessionSearchTextFromDb(
+  db: Database.Database,
+  sessionId: number,
+  role: 'user' | 'assistant',
+): string {
+  const rows = db.prepare(
+    `SELECT content_text FROM messages
+      WHERE session_id = ? AND is_sidechain = 0 AND role = ?
+      ORDER BY seq, id`,
+  ).all(sessionId, role) as Array<{ content_text: string }>
+  return rows
+    .map(r => r.content_text.trim())
     .filter(Boolean)
     .join('\n')
 }
