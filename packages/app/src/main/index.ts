@@ -39,6 +39,7 @@ import {
   SPOOL_DIR,
 } from '@spool-lab/core'
 import { spawnScanWorker, type ScanWorkerProxy } from './scan-worker-proxy.js'
+import { spawnMutationWorker, type MutationWorkerProxy } from './mutation-worker-proxy.js'
 import { Effect } from 'effect'
 import { registerSecurityIpc, registerSecurityReadinessIpc, SECURITY_IPC_CHANNELS, type SecurityReadiness } from './ipc/security.js'
 import { loadSecurityPreferences, saveSecurityPreferences } from './securityPreferences.js'
@@ -113,6 +114,7 @@ let watcher: SpoolWatcher
 let acpManager: AcpManager
 let isSyncActive = false
 let scanWorker: ScanWorkerProxy | null = null
+let mutationWorker: MutationWorkerProxy | null = null
 let disposeSecurityIpc: (() => void) | null = null
 let setSecurityReadiness: ((next: SecurityReadiness) => void) | null = null
 let disposeSecurityReadinessIpc: (() => void) | null = null
@@ -233,6 +235,20 @@ async function bootScanWorker(): Promise<void> {
   }
 }
 
+/** Bring up the mutation worker — purge / dismiss / undismiss SQL
+ *  runs there so the main process event loop stays unblocked through
+ *  the ~1s tail of bulk operations on large archives. Failure is
+ *  non-fatal: the IPC handlers fall back to running the same SQL
+ *  in-process on the main DB handle, which is the legacy behaviour. */
+async function bootMutationWorker(): Promise<void> {
+  try {
+    mutationWorker = await spawnMutationWorker(join(__dirname, 'mutation-worker-thread.js'))
+  } catch (err) {
+    console.error('[security] mutation worker failed to boot:', err)
+    mutationWorker = null
+  }
+}
+
 async function shutdownScanWorker(): Promise<void> {
   if (disposeSecurityIpc) {
     try { disposeSecurityIpc() } catch { /* best effort */ }
@@ -248,6 +264,12 @@ async function shutdownScanWorker(): Promise<void> {
       await scanWorker.shutdown()
     } catch { /* best effort */ }
     scanWorker = null
+  }
+  if (mutationWorker) {
+    try {
+      await mutationWorker.shutdown()
+    } catch { /* best effort */ }
+    mutationWorker = null
   }
   try { await pfRuntime.stop() } catch { /* best effort */ }
 }
@@ -319,7 +341,16 @@ async function ensureSecurityBooted(): Promise<void> {
     setSecurityReadiness?.({ ready: false, reason: 'scanner-unavailable' })
     return
   }
-  disposeSecurityIpc = registerSecurityIpc({
+  // Register IPC immediately after the scan worker is ready so the
+  // renderer's `security:get-scan-status` polling on first window
+  // open finds a handler. Mutation-worker boot is deferred and
+  // plumbed in via `securityIpc.attachMutationWorker` once it
+  // reports ready — the handlers fall back to in-process SQL in the
+  // meantime. Without this split the e2e harness saw the
+  // first-window polling rejected with "No handler registered for
+  // security:get-scan-status" because both worker boots were
+  // awaited sequentially before the IPC was registered.
+  const securityIpc = registerSecurityIpc({
     db,
     worker: scanWorker,
     runPromise: runWithObservability,
@@ -332,10 +363,22 @@ async function ensureSecurityBooted(): Promise<void> {
       })
     },
   })
+  disposeSecurityIpc = securityIpc.dispose
   setSecurityReadiness?.({ ready: true })
   console.log('[security.lifecycle] booted — worker + IPC ready, backfilling')
   runWithObservability(scanWorker.backfill()).catch((err) => {
     console.error('[security] boot backfill failed:', err)
+  })
+
+  // Mutation worker boots in the background. Until it's ready the
+  // IPC handlers run their in-process fallback path on the main
+  // thread — same SQL, same correctness, just no off-main offload.
+  // On success, attach so subsequent calls route through the worker
+  // AND start the per-mutation change forwarder.
+  void bootMutationWorker().then(() => {
+    if (mutationWorker) {
+      securityIpc.attachMutationWorker(mutationWorker)
+    }
   })
   // If the user enabled PF before this boot, bring the inference window
   // up now that the rest of Spool is ready.
