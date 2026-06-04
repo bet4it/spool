@@ -144,6 +144,9 @@
     "bucket_earlierWeek": "本周早些时候",
     "bucket_earlierMonth": "本月早些时候",
     "bucket_older": "更早",
+    "sortAriaLabel": "会话排序",
+    "sort_startedAt": "按开始时间",
+    "sort_endedAt": "按最后消息",
     "footer_loadingMore": "正在加载更早的会话…",
     "footer_endOf_other": "共 {{count}} 个会话"
   },

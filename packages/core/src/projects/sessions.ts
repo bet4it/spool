@@ -3,9 +3,11 @@ import type { Session, SessionSource } from '../types.js'
 import { SESSION_SELECT, rowToSession } from '../db/queries.js'
 
 export type ProjectSessionSortOrder = 'recent' | 'oldest' | 'most_messages' | 'title'
+export type RecentSessionSortBasis = 'started_at' | 'ended_at'
 
 export type SessionsCursor = {
   startedAt: string
+  endedAt: string
   sessionUuid: string
   messageCount: number
   title: string
@@ -63,17 +65,17 @@ export function listSessionsByIdentity(
 
 export function listRecentSessionsPage(
   db: Database.Database,
-  options: { limit?: number; cursor?: SessionsCursor } = {},
+  options: { limit?: number; cursor?: SessionsCursor; sortBasis?: RecentSessionSortBasis } = {},
 ): SessionsPage {
-  const { limit = DEFAULT_PAGE_SIZE, cursor } = options
+  const { limit = DEFAULT_PAGE_SIZE, cursor, sortBasis = 'started_at' } = options
   const conditions: string[] = ['s.message_count > 0']
   const params: unknown[] = []
   if (cursor) {
-    const c = cursorWhere('recent', cursor)
+    const c = recentCursorWhere(sortBasis, cursor)
     conditions.push(c.sql)
     params.push(...c.params)
   }
-  return executePage(db, conditions, params, 'recent', limit)
+  return executePage(db, conditions, params, 'recent', limit, sortBasis)
 }
 
 export type DirectoryCount = {
@@ -135,11 +137,12 @@ function executePage(
   params: unknown[],
   sortOrder: ProjectSessionSortOrder,
   limit: number,
+  recentSortBasis: RecentSessionSortBasis = 'started_at',
 ): SessionsPage {
   const sql = `
     ${SESSION_SELECT}
     WHERE ${conditions.join(' AND ')}
-    ORDER BY ${orderByClause(sortOrder)}
+    ORDER BY ${orderByClause(sortOrder, recentSortBasis)}
     LIMIT ?
   `
   // Fetch limit+1 so we can detect "more rows exist" without a count query.
@@ -151,6 +154,7 @@ function executePage(
   const nextCursor = hasMore && last
     ? {
         startedAt: last.startedAt,
+        endedAt: last.endedAt,
         sessionUuid: last.sessionUuid,
         messageCount: last.messageCount,
         title: last.title ?? '',
@@ -159,7 +163,10 @@ function executePage(
   return { sessions, nextCursor }
 }
 
-function orderByClause(sortOrder: ProjectSessionSortOrder): string {
+function orderByClause(
+  sortOrder: ProjectSessionSortOrder,
+  recentSortBasis: RecentSessionSortBasis = 'started_at',
+): string {
   // session_uuid is the unique tiebreaker so the page boundary is deterministic
   // and keyset pagination skips exactly the rows already shown.
   switch (sortOrder) {
@@ -171,8 +178,26 @@ function orderByClause(sortOrder: ProjectSessionSortOrder): string {
       return "COALESCE(NULLIF(s.title, ''), '') ASC, s.started_at DESC, s.session_uuid ASC"
     case 'recent':
     default:
+      if (recentSortBasis === 'ended_at') return 's.ended_at DESC, s.started_at DESC, s.session_uuid ASC'
       return 's.started_at DESC, s.session_uuid ASC'
   }
+}
+
+function recentCursorWhere(
+  sortBasis: RecentSessionSortBasis,
+  c: SessionsCursor,
+): { sql: string; params: unknown[] } {
+  if (sortBasis === 'ended_at') {
+    return {
+      sql: `(
+        s.ended_at < ?
+        OR (s.ended_at = ? AND s.started_at < ?)
+        OR (s.ended_at = ? AND s.started_at = ? AND s.session_uuid > ?)
+      )`,
+      params: [c.endedAt, c.endedAt, c.startedAt, c.endedAt, c.startedAt, c.sessionUuid],
+    }
+  }
+  return cursorWhere('recent', c)
 }
 
 function cursorWhere(

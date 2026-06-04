@@ -4,7 +4,7 @@ import type {
   ListSessionsByIdentityOptions, ProjectSessionSortOrder, SessionsCursor, SessionsPage, DirectoryCount,
   ShareDraftRow, ShareDraftListItem, UpsertShareDraftInput,
   PublishedShareCacheItem,
-  SessionSource,
+  SessionSource, RecentSessionSortBasis,
   FindingRow, SessionWithFindingCounts, RiskByCategoryRow, OccurrenceBySession,
   FindingsChange, ScanStatus, FindingFilter, SessionFindingFilter,
   AllowlistEntryRow,
@@ -113,7 +113,7 @@ const api = {
   searchPreview: (query: string, limit?: number, source?: string): Promise<SearchResult[]> =>
     ipcRenderer.invoke('spool:search-preview', { query, limit, source }),
 
-  listSessions: (options?: { limit?: number; cursor?: SessionsCursor }): Promise<SessionsPage> =>
+  listSessions: (options?: { limit?: number; cursor?: SessionsCursor; sortBasis?: RecentSessionSortBasis }): Promise<SessionsPage> =>
     ipcRenderer.invoke('spool:list-sessions', options ?? {}),
 
   listProjectGroups: (): Promise<ProjectGroup[]> =>
@@ -173,6 +173,12 @@ const api = {
 
   setSidebarCollapsed: (collapsed: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('spool:set-sidebar-collapsed', { collapsed }),
+
+  getLibraryRecentSortBasis: (): Promise<RecentSessionSortBasis> =>
+    ipcRenderer.invoke('spool:get-library-recent-sort-basis'),
+
+  setLibraryRecentSortBasis: (sortBasis: RecentSessionSortBasis): Promise<{ ok: boolean; sortBasis: RecentSessionSortBasis }> =>
+    ipcRenderer.invoke('spool:set-library-recent-sort-basis', { sortBasis }),
 
   shareDraft: {
     list: (limit?: number): Promise<ShareDraftListItem[]> =>

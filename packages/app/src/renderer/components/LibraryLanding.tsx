@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Layers3 as LibraryIcon } from 'lucide-react'
-import type { Session, SessionsCursor } from '@spool-lab/core'
+import { ArrowDownUp, Layers3 as LibraryIcon } from 'lucide-react'
+import type { RecentSessionSortBasis, Session, SessionsCursor } from '@spool-lab/core'
 import VirtualSessionList, { type SessionListRow } from './VirtualSessionList.js'
 import { FeaturedEmptyState } from './EmptyState.js'
-import { insertSessionSorted } from '../../shared/sessionSort.js'
+import Menu from './Menu.js'
 
 type BucketKey = 'today' | 'yesterday' | 'earlierWeek' | 'earlierMonth' | 'older'
 
@@ -12,7 +12,9 @@ type Props = {
   onSelectProject: (identityKey: string) => void
   onOpenSession: (uuid: string) => void
   onCopySessionId: (source: Session['source']) => void
-  onShare: (uuid: string) => void
+  sortBasis: RecentSessionSortBasis
+  onSortBasisChange: (next: RecentSessionSortBasis) => void
+  onShare?: (uuid: string) => void
 }
 
 type DateBucket = {
@@ -23,7 +25,7 @@ type DateBucket = {
 
 const PAGE_SIZE = 50
 
-export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare }: Props) {
+export default function LibraryLanding({ onOpenSession, onCopySessionId, sortBasis, onSortBasisChange, onShare }: Props) {
   const { t, i18n } = useTranslation()
   const [pinnedSessions, setPinnedSessions] = useState<Session[]>([])
   const [recentSessions, setRecentSessions] = useState<Session[] | null>(null)
@@ -51,7 +53,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
     setLoadingMore(false)
     Promise.all([
       window.spool.listPinnedSessions(),
-      window.spool.listSessions({ limit: PAGE_SIZE }),
+      window.spool.listSessions({ limit: PAGE_SIZE, sortBasis }),
     ])
       .then(([pinned, page]) => {
         if (fetchTokenRef.current !== token) return
@@ -65,7 +67,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
         setPinnedSessions([])
         setRecentSessions([])
       })
-  }, [])
+  }, [sortBasis])
 
   useEffect(() => {
     // Pin events from sibling components (sidebar, session detail).
@@ -74,7 +76,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
     // recent — otherwise the session vanishes from this view entirely.
     //
     // We force `exhausted=true` for the reinsertion. Without it,
-    // insertSessionSorted would drop candidates older than the last
+    // insertLibrarySessionSorted would drop candidates older than the last
     // loaded row (they'd "live in a future page"), which is exactly
     // the situation we're trying to avoid here — the user just had the
     // session in their pinned section and expects it to stay visible.
@@ -92,7 +94,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
             if (!prev) return prev
             let acc = prev.filter(s => !freshUuids.has(s.sessionUuid))
             for (const candidate of newlyUnpinned) {
-              acc = insertSessionSorted(acc, candidate, 'recent', true)
+              acc = insertLibrarySessionSorted(acc, candidate, sortBasis, true)
             }
             return acc
           })
@@ -101,7 +103,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
     }
     window.addEventListener('spool:pin-change', handlePinEvent)
     return () => window.removeEventListener('spool:pin-change', handlePinEvent)
-  }, [])
+  }, [sortBasis])
 
   useEffect(() => {
     // New sessions arrived via sync: soft-merge them into the first page
@@ -109,7 +111,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
     // (`loadingMore`) because the merge would race with that fetch.
     const off = window.spool.onNewSessions(() => {
       if (loadingRef.current) return
-      window.spool.listSessions({ limit: PAGE_SIZE })
+      window.spool.listSessions({ limit: PAGE_SIZE, sortBasis })
         .then(page => {
           setRecentSessions(prev => {
             if (prev === null) return page.sessions
@@ -124,13 +126,13 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
         .catch(() => {})
     })
     return () => { off() }
-  }, [])
+  }, [sortBasis])
 
   const loadMore = useCallback(() => {
     if (loadingRef.current || !cursorRef.current) return
     const token = ++fetchTokenRef.current
     setLoadingMore(true)
-    window.spool.listSessions({ limit: PAGE_SIZE, cursor: cursorRef.current })
+    window.spool.listSessions({ limit: PAGE_SIZE, cursor: cursorRef.current, sortBasis })
       .then(page => {
         if (fetchTokenRef.current !== token) return
         setRecentSessions(prev => {
@@ -154,7 +156,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
         setLoadingMore(false)
         setCursor(null)
       })
-  }, [])
+  }, [sortBasis])
 
   function handlePinChange(sessionUuid: string, pinned: boolean) {
     if (pinned) {
@@ -170,7 +172,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
         // exhausted=true so an unpinned session deeper than the loaded
         // range still appears — see handlePinEvent for the rationale.
         setRecentSessions(prev =>
-          prev ? insertSessionSorted(prev, candidate, 'recent', true) : prev,
+          prev ? insertLibrarySessionSorted(prev, candidate, sortBasis, true) : prev,
         )
       }
     }
@@ -179,9 +181,9 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
   // i18n.language is a stable per-locale key; depending on `t` (which
   // changes identity on most renders) would rebuild rows constantly.
   const buckets = useMemo(
-    () => (recentSessions ? bucketByDate(recentSessions, looseTranslator(t)) : []),
+    () => (recentSessions ? bucketByDate(recentSessions, looseTranslator(t), sortBasis) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recentSessions, i18n.language],
+    [recentSessions, i18n.language, sortBasis],
   )
   const totalSessions = pinnedSessions.length + (recentSessions?.length ?? 0)
   const pinnedLabel = useMemo(
@@ -200,7 +202,7 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
         testId: 'library-pinned-header',
       })
       for (const s of pinnedSessions) {
-        out.push({ kind: 'session', id: `p-${s.sessionUuid}`, session: s, pinned: true, showProject: true, headerId: 'pinned' })
+        out.push({ kind: 'session', id: `p-${s.sessionUuid}`, session: s, pinned: true, showProject: true, dateIso: dateForSession(s, sortBasis), headerId: 'pinned' })
       }
     }
     for (const bucket of buckets) {
@@ -220,13 +222,14 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
           session: s,
           showProject: true,
           bucket: bucket.key,
+          dateIso: dateForSession(s, sortBasis),
           headerId: `bucket-${bucket.key}`,
         })
       }
     }
     out.push({ kind: 'footer', id: 'footer', loading: loadingMore, exhausted, total: totalSessions })
     return out
-  }, [pinnedSessions, pinnedLabel, buckets, loadingMore, exhausted, totalSessions])
+  }, [pinnedSessions, pinnedLabel, buckets, sortBasis, loadingMore, exhausted, totalSessions])
 
   return (
     <div data-testid="library-landing" className="flex flex-col h-full overflow-hidden">
@@ -245,11 +248,61 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, onShare
           onPinChange={handlePinChange}
           onOpenSession={onOpenSession}
           onCopySessionId={onCopySessionId}
-          onShare={onShare}
+          {...(onShare ? { onShare } : {})}
           testId="library-landing-scroll"
           stickyHeaders
+          stickyHeaderAccessory={(
+            <LibrarySortControl
+              sortBasis={sortBasis}
+              onSortBasisChange={onSortBasisChange}
+            />
+          )}
         />
       )}
+    </div>
+  )
+}
+
+function LibrarySortControl({
+  sortBasis,
+  onSortBasisChange,
+}: {
+  sortBasis: RecentSessionSortBasis
+  onSortBasisChange: (next: RecentSessionSortBasis) => void
+}) {
+  const { t } = useTranslation()
+  const looseT = t as unknown as (k: string, o?: Record<string, unknown>) => string
+  const options: Array<{ value: RecentSessionSortBasis; label: string }> = [
+    { value: 'started_at', label: looseT('library.sort_startedAt') },
+    { value: 'ended_at', label: looseT('library.sort_endedAt') },
+  ]
+  const activeLabel = options.find(option => option.value === sortBasis)?.label ?? options[0]!.label
+  return (
+    <div className="flex flex-none items-center justify-end">
+      <Menu
+        align="right"
+        testId="library-sort-basis-menu"
+        trigger={({ open, toggle }) => (
+          <button
+            type="button"
+            data-testid="library-sort-basis"
+            data-value={sortBasis}
+            aria-label={looseT('library.sortAriaLabel')}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={toggle}
+            className="inline-flex h-7 flex-none items-center gap-1.5 px-2 text-xs font-medium text-warm-muted dark:text-dark-muted transition-colors hover:text-warm-text dark:hover:text-dark-text"
+          >
+            <ArrowDownUp size={13} strokeWidth={1.5} aria-hidden />
+            <span>{activeLabel}</span>
+          </button>
+        )}
+        items={options.map(option => ({
+          label: option.label,
+          active: option.value === sortBasis,
+          onSelect: () => onSortBasisChange(option.value),
+        }))}
+      />
     </div>
   )
 }
@@ -328,10 +381,10 @@ export function bucketSessionsByDate(sessions: Session[], t?: TranslateFn): Date
       default: return key
     }
   }
-  return bucketByDate(sessions, t ?? fallback)
+  return bucketByDate(sessions, t ?? fallback, 'started_at')
 }
 
-function bucketByDate(sessions: Session[], t: TranslateFn): DateBucket[] {
+function bucketByDate(sessions: Session[], t: TranslateFn, sortBasis: RecentSessionSortBasis): DateBucket[] {
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const startOfYesterday = startOfToday - 86400000
@@ -345,7 +398,7 @@ function bucketByDate(sessions: Session[], t: TranslateFn): DateBucket[] {
   const older: Session[] = []
 
   for (const session of sessions) {
-    const ts = Date.parse(session.startedAt)
+    const ts = Date.parse(dateForSession(session, sortBasis))
     if (Number.isNaN(ts)) {
       older.push(session)
       continue
@@ -364,4 +417,33 @@ function bucketByDate(sessions: Session[], t: TranslateFn): DateBucket[] {
   if (earlierMonth.length > 0) buckets.push({ key: 'earlierMonth', label: t('library.bucket_earlierMonth'), sessions: earlierMonth })
   if (older.length > 0) buckets.push({ key: 'older', label: t('library.bucket_older'), sessions: older })
   return buckets
+}
+
+function dateForSession(session: Session, sortBasis: RecentSessionSortBasis): string {
+  return sortBasis === 'ended_at' ? session.endedAt : session.startedAt
+}
+
+function compareLibrarySessions(a: Session, b: Session, sortBasis: RecentSessionSortBasis): number {
+  if (sortBasis === 'ended_at') {
+    if (a.endedAt !== b.endedAt) return a.endedAt > b.endedAt ? -1 : 1
+    if (a.startedAt !== b.startedAt) return a.startedAt > b.startedAt ? -1 : 1
+    return a.sessionUuid < b.sessionUuid ? -1 : 1
+  }
+  if (a.startedAt !== b.startedAt) return a.startedAt > b.startedAt ? -1 : 1
+  return a.sessionUuid < b.sessionUuid ? -1 : 1
+}
+
+function insertLibrarySessionSorted(
+  sessions: Session[],
+  candidate: Session,
+  sortBasis: RecentSessionSortBasis,
+  exhausted: boolean,
+): Session[] {
+  const last = sessions[sessions.length - 1]
+  if (last && compareLibrarySessions(candidate, last, sortBasis) > 0 && !exhausted) {
+    return sessions
+  }
+  const idx = sessions.findIndex(s => compareLibrarySessions(candidate, s, sortBasis) <= 0)
+  if (idx === -1) return [...sessions, candidate]
+  return [...sessions.slice(0, idx), candidate, ...sessions.slice(idx)]
 }

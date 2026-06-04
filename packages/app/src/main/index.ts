@@ -50,7 +50,7 @@ import { shouldAutoActivatePf } from './security/pf-activation.js'
 import { pfModelDir } from './security/model-paths.js'
 import type {
   FragmentResult, SessionSource, ListSessionsByIdentityOptions, SessionsCursor,
-  ShareDraftRow, UpsertShareDraftInput,
+  ShareDraftRow, UpsertShareDraftInput, RecentSessionSortBasis,
 } from '@spool-lab/core'
 import { setupTray } from './tray.js'
 import { AcpManager } from './acp.js'
@@ -58,7 +58,7 @@ import { setupAutoUpdater, downloadUpdate, quitAndInstall } from './updater.js'
 import { openTerminal } from './terminal.js'
 import { getSessionResumeCommand } from '../shared/resumeCommand.js'
 import { resolveResumeWorkingDirectory } from './sessionResume.js'
-import { loadUIPreferences, saveThemeEditor, saveThemeSource, saveSidebarCollapsed } from './uiPreferences.js'
+import { loadUIPreferences, saveThemeEditor, saveThemeSource, saveSidebarCollapsed, saveLibraryRecentSortBasis } from './uiPreferences.js'
 import { hydrateBinaryCache } from './binaryCache.js'
 import { snapshotEventLoopLag, startEventLoopMonitor } from './eventLoopMonitor.js'
 import { registerShareAuthIpc } from './ipc/share-auth.js'
@@ -763,7 +763,7 @@ ipcMain.handle('spool:search-preview', (_e, { query, limit = 5, source }: { quer
   return fragments
 })
 
-ipcMain.handle('spool:list-sessions', (_e, args: { limit?: number; cursor?: SessionsCursor } = {}) => {
+ipcMain.handle('spool:list-sessions', (_e, args: { limit?: number; cursor?: SessionsCursor; sortBasis?: RecentSessionSortBasis } = {}) => {
   return listRecentSessionsPage(db, args)
 })
 
@@ -1012,6 +1012,17 @@ ipcMain.handle('spool:set-sidebar-collapsed', (_e, { collapsed }: { collapsed: b
   uiPreferences.sidebarCollapsed = collapsed
   saveSidebarCollapsed(collapsed)
   return { ok: true }
+})
+
+ipcMain.handle('spool:get-library-recent-sort-basis', (): RecentSessionSortBasis => {
+  return uiPreferences.libraryRecentSortBasis
+})
+
+ipcMain.handle('spool:set-library-recent-sort-basis', (_e, { sortBasis }: { sortBasis: RecentSessionSortBasis }) => {
+  const next: RecentSessionSortBasis = sortBasis === 'ended_at' ? 'ended_at' : 'started_at'
+  uiPreferences.libraryRecentSortBasis = next
+  saveLibraryRecentSortBasis(next)
+  return { ok: true, sortBasis: next }
 })
 
 // ── Auto-update ──────────────────────────────────────────────────────────

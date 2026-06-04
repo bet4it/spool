@@ -149,6 +149,9 @@
     "bucket_earlierWeek": "Earlier this week",
     "bucket_earlierMonth": "Earlier this month",
     "bucket_older": "Older",
+    "sortAriaLabel": "Sort sessions",
+    "sort_startedAt": "Start time",
+    "sort_endedAt": "Last message",
     "footer_loadingMore": "Loading older sessions…",
     "footer_endOf_one": "End of {{count}} session",
     "footer_endOf_other": "End of {{count}} sessions"

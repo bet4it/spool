@@ -19,19 +19,20 @@ type Props = {
    *  redundant "today, …" / "yesterday, …" prefix when the row already
    *  sits under a bucket header. */
   bucket?: BucketKey
+  dateIso?: string
   onPinChange?: (uuid: string, pinned: boolean) => void
   onOpenSession: (uuid: string) => void
   onCopySessionId: (source: Session['source']) => void
   onShare?: (uuid: string) => void
 }
 
-export default function SessionRow({ session, pinned = false, showProject = false, bucket, onPinChange, onOpenSession, onCopySessionId, onShare }: Props) {
+export default function SessionRow({ session, pinned = false, showProject = false, bucket, dateIso, onPinChange, onOpenSession, onCopySessionId, onShare }: Props) {
   const { t } = useTranslation()
   const [resuming, setResuming] = useState(false)
 
   const looseT = t as unknown as (k: string, o?: Record<string, unknown>) => string
   const title = session.title?.trim() || t('common.noTitle')
-  const date = formatRelativeDate(session.startedAt, { ...(bucket ? { bucket } : {}), t: looseT })
+  const date = formatRelativeDate(dateIso ?? session.startedAt, { ...(bucket ? { bucket } : {}), t: looseT })
   const model = compactModel(session.model)
 
   function handleOpen() {

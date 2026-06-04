@@ -6,6 +6,7 @@ import {
   type ThemeEditorStateV1,
   type ThemeSource,
 } from '../renderer/theme/editorTypes.js'
+import type { RecentSessionSortBasis } from '@spool-lab/core'
 
 interface UIConfigFile {
   themeSource?: unknown
@@ -13,6 +14,7 @@ interface UIConfigFile {
   // `spoolDaemonNoticeShown` written by older builds is silently ignored on
   // read — left out of the type but tolerated in the on-disk JSON.
   sidebarCollapsed?: unknown
+  libraryRecentSortBasis?: unknown
 }
 
 const UI_CONFIG_PATH = join(SPOOL_DIR, 'ui.json')
@@ -21,10 +23,15 @@ export interface UIPreferences {
   themeSource: ThemeSource
   themeEditor: ThemeEditorStateV1 | null
   sidebarCollapsed: boolean
+  libraryRecentSortBasis: RecentSessionSortBasis
 }
 
 function normalizeThemeSource(raw: unknown): ThemeSource {
   return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system'
+}
+
+function normalizeRecentSortBasis(raw: unknown): RecentSessionSortBasis {
+  return raw === 'ended_at' || raw === 'started_at' ? raw : 'started_at'
 }
 
 function readUIConfig(): UIConfigFile {
@@ -47,12 +54,18 @@ export function loadUIPreferences(): UIPreferences {
     themeSource: normalizeThemeSource(config.themeSource),
     themeEditor: normalizeThemeEditorState(config.themeEditor),
     sidebarCollapsed: config.sidebarCollapsed === true,
+    libraryRecentSortBasis: normalizeRecentSortBasis(config.libraryRecentSortBasis),
   }
 }
 
 export function saveSidebarCollapsed(sidebarCollapsed: boolean): void {
   const config = readUIConfig()
   writeUIConfig({ ...config, sidebarCollapsed })
+}
+
+export function saveLibraryRecentSortBasis(libraryRecentSortBasis: RecentSessionSortBasis): void {
+  const config = readUIConfig()
+  writeUIConfig({ ...config, libraryRecentSortBasis })
 }
 
 export function saveThemeSource(themeSource: ThemeSource): void {

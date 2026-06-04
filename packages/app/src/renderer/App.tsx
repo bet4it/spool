@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, memo, startTransition, useDeferredValue } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import type { FragmentResult, SearchResult, StatusInfo } from '@spool-lab/core'
+import type { FragmentResult, RecentSessionSortBasis, SearchResult, StatusInfo } from '@spool-lab/core'
 import { type SearchMode } from './components/SearchBar.js'
 import FragmentResults from './components/FragmentResults.js'
 import SessionDetail from './components/SessionDetail.js'
@@ -93,6 +93,7 @@ export default function App() {
   const [sidebarSortOrder, setSidebarSortOrder] = useState<SidebarSortOrder>(DEFAULT_SIDEBAR_SORT_ORDER)
   const [pinnedSortOrder, setPinnedSortOrder] = useState<PinnedSortOrder>(DEFAULT_PINNED_SORT_ORDER)
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSessionSortOrder>(DEFAULT_PROJECT_SORT_ORDER)
+  const [libraryRecentSortBasis, setLibraryRecentSortBasis] = useState<RecentSessionSortBasis>('started_at')
   const [themeEditor, setThemeEditor] = useState<ThemeEditorStateV1>(() => defaultThemeEditorState())
   // undefined until AgentsConfig has loaded — useLanguageBootstrap skips
   // until then so the cached locale (set by the last applyLanguage call)
@@ -327,6 +328,13 @@ export default function App() {
       .catch(console.error)
   }, [])
 
+  useEffect(() => {
+    if (!window.spool?.getLibraryRecentSortBasis) return
+    window.spool.getLibraryRecentSortBasis()
+      .then(setLibraryRecentSortBasis)
+      .catch(console.error)
+  }, [])
+
   // Warm the SecurityPreferences cache at app boot so every Toggle in
   // Settings → Security renders with its persisted state from frame 1.
   // Without this, opening the tab cold would trigger a fetch on mount
@@ -458,6 +466,17 @@ export default function App() {
     try {
       const config = await window.spool.getAgentsConfig()
       await window.spool.setAgentsConfig({ ...config, projectSortOrder: next })
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
+  const handleLibraryRecentSortBasisChange = useCallback(async (next: RecentSessionSortBasis) => {
+    setLibraryRecentSortBasis(next)
+    if (!window.spool?.setLibraryRecentSortBasis) return
+    try {
+      const result = await window.spool.setLibraryRecentSortBasis(next)
+      setLibraryRecentSortBasis(result.sortBasis)
     } catch (err) {
       console.error(err)
     }
@@ -948,6 +967,8 @@ export default function App() {
             }}
             onOpenSession={handleOpenSession}
             onCopySessionId={handleCopySessionId}
+            sortBasis={libraryRecentSortBasis}
+            onSortBasisChange={handleLibraryRecentSortBasisChange}
             onShare={handleStartShareFromUuid}
           />
         ) : (

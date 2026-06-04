@@ -7,7 +7,7 @@ import type { BucketKey } from '../../shared/formatDate.js'
 
 export type SessionListRow =
   | { kind: 'header'; id: string; label: ReactNode; testId?: string; dataAttr?: Record<string, string>; collapsible?: boolean; defaultOpen?: boolean; sticky?: boolean }
-  | { kind: 'session'; id: string; session: Session; pinned?: boolean; showProject?: boolean; bucket?: BucketKey; headerId: string | null }
+  | { kind: 'session'; id: string; session: Session; pinned?: boolean; showProject?: boolean; bucket?: BucketKey; dateIso?: string; headerId: string | null }
   | { kind: 'footer'; id: string; loading: boolean; exhausted: boolean; total: number }
 
 type Props = {
@@ -23,6 +23,8 @@ type Props = {
   collapsibleSections?: boolean
   /** Use react-virtuoso's grouped list so section headers stick at the top. */
   stickyHeaders?: boolean
+  /** Single control overlaid on the right edge of the sticky header row. */
+  stickyHeaderAccessory?: ReactNode
 }
 
 type StickyGroup = {
@@ -58,6 +60,7 @@ export default function VirtualSessionList({
   testId,
   collapsibleSections = true,
   stickyHeaders = false,
+  stickyHeaderAccessory,
 }: Props) {
   // Tracks which collapsible headers are explicitly closed. Headers not in
   // the set are open (we keep "closed" rather than "open" so newly arriving
@@ -108,6 +111,7 @@ export default function VirtualSessionList({
         {...(row.pinned ? { pinned: true } : {})}
         {...(row.showProject ? { showProject: true } : {})}
         {...(row.bucket ? { bucket: row.bucket } : {})}
+        {...(row.dateIso ? { dateIso: row.dateIso } : {})}
         {...(onPinChange ? { onPinChange } : {})}
         onOpenSession={onOpenSession}
         onCopySessionId={onCopySessionId}
@@ -147,6 +151,13 @@ export default function VirtualSessionList({
           }}
           itemContent={(_index, _groupIndex, row) => (row ? renderRow(row) : null)}
         />
+        {stickyHeaderAccessory && (
+          <div className="pointer-events-none absolute right-5 top-1.5 z-40 flex h-7 items-center">
+            <div className="pointer-events-auto">
+              {stickyHeaderAccessory}
+            </div>
+          </div>
+        )}
       </div>
     )
   }

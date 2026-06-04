@@ -144,6 +144,9 @@
     "bucket_earlierWeek": "今週",
     "bucket_earlierMonth": "今月",
     "bucket_older": "それ以前",
+    "sortAriaLabel": "セッションを並べ替え",
+    "sort_startedAt": "開始時刻",
+    "sort_endedAt": "最後のメッセージ",
     "footer_loadingMore": "古いセッションを読み込んでいます…",
     "footer_endOf_other": "{{count}} 件のセッション"
   },

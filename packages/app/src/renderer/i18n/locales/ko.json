@@ -144,6 +144,9 @@
     "bucket_earlierWeek": "이번 주 초",
     "bucket_earlierMonth": "이번 달 초",
     "bucket_older": "이전",
+    "sortAriaLabel": "세션 정렬",
+    "sort_startedAt": "시작 시간",
+    "sort_endedAt": "마지막 메시지",
     "footer_loadingMore": "이전 세션 불러오는 중…",
     "footer_endOf_other": "총 {{count}}개 세션"
   },

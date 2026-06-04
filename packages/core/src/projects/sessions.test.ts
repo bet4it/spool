@@ -125,7 +125,7 @@ describe('listRecentSessionsPage', () => {
       INSERT INTO sessions (project_id, source_id, session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime)
       VALUES
         (1,1,'a','/a','a','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z',1,0,'2026-05-01T00:00:00Z'),
-        (1,1,'b','/b','b','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z',1,0,'2026-05-02T00:00:00Z'),
+        (1,1,'b','/b','b','2026-05-02T00:00:00Z','2026-05-05T00:00:00Z',1,0,'2026-05-05T00:00:00Z'),
         (1,1,'c','/c','c','2026-05-03T00:00:00Z','2026-05-03T00:00:00Z',1,0,'2026-05-03T00:00:00Z');
     `)
   })
@@ -136,6 +136,16 @@ describe('listRecentSessionsPage', () => {
     expect(page1.nextCursor).not.toBeNull()
 
     const page2 = listRecentSessionsPage(db, { limit: 2, cursor: page1.nextCursor! })
+    expect(page2.sessions.map(s => s.sessionUuid)).toEqual(['a'])
+    expect(page2.nextCursor).toBeNull()
+  })
+
+  it('can paginate recent sessions by last message time', () => {
+    const page1 = listRecentSessionsPage(db, { limit: 2, sortBasis: 'ended_at' })
+    expect(page1.sessions.map(s => s.sessionUuid)).toEqual(['b', 'c'])
+    expect(page1.nextCursor).not.toBeNull()
+
+    const page2 = listRecentSessionsPage(db, { limit: 2, sortBasis: 'ended_at', cursor: page1.nextCursor! })
     expect(page2.sessions.map(s => s.sessionUuid)).toEqual(['a'])
     expect(page2.nextCursor).toBeNull()
   })
