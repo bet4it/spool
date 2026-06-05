@@ -9,13 +9,14 @@ import { useHotkeys } from '../hooks/useHotkeys.js'
 import Menu from './Menu.js'
 import ShortcutsTab from './ShortcutsTab.js'
 import SecurityPane from './Settings/SecurityPane.js'
-import { useSecurityEnabled } from '../featureFlags.js'
+import { useSecurityEnabled, useSharePublish } from '../featureFlags.js'
 import LabsTab from './LabsTab.js'
+import SettingsAccount from './SettingsAccount.js'
 import Toggle from './Toggle.js'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'sources' | 'agent' | 'labs' | 'security'
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'sources' | 'agent' | 'account' | 'labs' | 'security'
 
 /** Must match SUPPORTED_TERMINALS in main/terminal.ts */
 const TERMINAL_VALUES = ['', 'Terminal', 'iTerm2', 'Warp', 'kitty', 'Alacritty', 'WezTerm'] as const
@@ -37,7 +38,16 @@ type Theme = 'system' | 'light' | 'dark'
 
 // ── Sidebar tabs ───────────────────────────────────────────────────────────
 
-const TAB_DEFS: { id: SettingsTab; labelKey: 'settings.tab_general' | 'settings.tab_appearance' | 'settings.tab_shortcuts' | 'settings.tab_sources' | 'settings.tab_agent' | 'settings.tab_labs' | 'settings.tab_security'; icon: ReactNode }[] = [
+// labelKey covers the existing locale entries; tabs whose i18n key has
+// not been authored yet pass `fallbackLabel` and the renderer prefers
+// it. This keeps the Account tab buildable without forcing a
+// cross-locale change in this PR.
+const TAB_DEFS: {
+  id: SettingsTab
+  labelKey: string
+  fallbackLabel?: string
+  icon: ReactNode
+}[] = [
   {
     id: 'general',
     labelKey: 'settings.tab_general',
@@ -119,6 +129,21 @@ const TAB_DEFS: { id: SettingsTab; labelKey: 'settings.tab_general' | 'settings.
       </svg>
     ),
   },
+  // Account is pinned to the bottom of the rail (after feature tabs) so
+  // toggling the `sharePublish` flag — which conditionally hides this
+  // row — doesn't shift Labs/Security up and down. Matches the GitHub
+  // and Slack settings convention: identity sits below configuration.
+  {
+    id: 'account',
+    labelKey: 'settings.tab_account',
+    fallbackLabel: 'Account',
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    ),
+  },
 ]
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -138,6 +163,19 @@ export default function SettingsPanel({
   const [tab, setTab] = useState<SettingsTab>(initialTab)
   const { t } = useTranslation()
   const securityEnabled = useSecurityEnabled()
+  // Account tab is the spool.pro identity surface (sign-in, handle,
+  // delete-account schedule). Sub-gated behind the share-publish flag
+  // so the tab doesn't appear in pre-launch dev builds that don't
+  // opt into the publish stack.
+  const publishEnabled = useSharePublish()
+  const visibleTabs = TAB_DEFS.filter(def => {
+    if (def.id === 'security' && !securityEnabled) return false
+    if (def.id === 'account' && !publishEnabled) return false
+    return true
+  })
+  // If the Account tab was active when the flag flipped off, fall back
+  // to General so the panel doesn't render against a hidden tab.
+  const activeTab: SettingsTab = !publishEnabled && tab === 'account' ? 'general' : tab
 
   useHotkeys({ Escape: onClose }, { modal: true })
 
@@ -148,26 +186,32 @@ export default function SettingsPanel({
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="w-[960px] h-[680px] max-w-[calc(100vw-48px)] max-h-[calc(100vh-48px)] bg-warm-bg dark:bg-dark-bg border border-warm-border dark:border-dark-border rounded-[10px] shadow-xl overflow-hidden flex">
-        {/* Sidebar */}
-        <div className="w-[176px] flex-none bg-warm-surface dark:bg-dark-surface border-r border-warm-border dark:border-dark-border flex flex-col pt-8 pb-3">
-          <div className="px-5 mb-3">
-            <h2 className="text-xl font-semibold text-warm-text dark:text-dark-text">{t('settings.title')}</h2>
+        {/* Sidebar — width + paddings tuned to match the desktop handoff
+            (220px rail, 22px vertical padding, 14px horizontal). */}
+        <div className="w-[220px] flex-none bg-warm-surface dark:bg-dark-surface border-r border-warm-border dark:border-dark-border flex flex-col pt-[22px] pb-3">
+          <div className="px-[14px] mb-[18px]">
+            <h2 className="text-[22px] font-bold text-warm-text dark:text-dark-text leading-none">{t('settings.title')}</h2>
           </div>
-          <div className="px-2 space-y-0.5">
-            {TAB_DEFS.filter(def => def.id !== 'security' || securityEnabled).map(def => (
+          <div className="px-2 space-y-[2px]">
+            {TAB_DEFS
+              .filter(def => def.id !== 'security' || securityEnabled)
+              .filter(def => def.id !== 'account' || publishEnabled)
+              .map(def => (
               <button
                 key={def.id}
                 type="button"
                 aria-pressed={tab === def.id}
                 onClick={() => setTab(def.id)}
-                className={`flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-0 ${
+                className={`flex w-full items-center gap-[11px] rounded-lg h-9 px-3 text-[13.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-0 ${
                   tab === def.id
-                    ? 'text-accent dark:text-accent-dark bg-accent-bg dark:bg-[#2A1800] font-medium'
-                    : 'text-warm-muted dark:text-dark-muted hover:text-warm-text dark:hover:text-dark-text hover:bg-warm-bg/70 dark:hover:bg-dark-bg/60'
+                    ? 'text-accent dark:text-accent-dark bg-accent-bg dark:bg-accent-bg-dark'
+                    : 'text-warm-text dark:text-dark-text hover:bg-warm-bg dark:hover:bg-dark-bg'
                 }`}
               >
-                {def.icon}
-                {t(def.labelKey)}
+                <span className={tab === def.id ? 'text-accent dark:text-accent-dark' : 'text-warm-muted dark:text-dark-muted'}>
+                  {def.icon}
+                </span>
+                {tabLabel(t, def.labelKey, def.fallbackLabel)}
               </button>
             ))}
           </div>
@@ -179,7 +223,10 @@ export default function SettingsPanel({
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex items-center justify-between px-16 pt-8 pb-2">
             <h3 className="text-xl font-semibold text-warm-text dark:text-dark-text">
-              {t(TAB_DEFS.find(def => def.id === tab)?.labelKey ?? 'settings.tab_general')}
+              {(() => {
+                const def = TAB_DEFS.find(d => d.id === tab) ?? TAB_DEFS[0]!
+                return tabLabel(t, def.labelKey, def.fallbackLabel)
+              })()}
             </h3>
             <button
               type="button"
@@ -210,6 +257,7 @@ export default function SettingsPanel({
             {tab === 'shortcuts' && <ShortcutsTab />}
             {tab === 'sources' && <SourcesTab claudeCount={claudeCount} codexCount={codexCount} geminiCount={geminiCount} opencodeCount={opencodeCount} />}
             {tab === 'agent' && <AgentTab />}
+            {tab === 'account' && <SettingsAccount />}
             {tab === 'labs' && <LabsTab />}
             {tab === 'security' && securityEnabled && <SecurityPane />}
           </div>
@@ -501,6 +549,19 @@ function AgentTab() {
 }
 
 // ── Shared components ──────────────────────────────────────────────────────
+
+// react-i18next's `t()` returns the raw key when a translation is
+// missing. For tabs whose key isn't authored yet we want the
+// human-readable fallbackLabel instead of `settings.tab_account`
+// leaking into the UI.
+function tabLabel(
+  t: (key: string) => string,
+  key: string,
+  fallback?: string,
+): string {
+  const translated = t(key)
+  return translated === key && fallback ? fallback : translated
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
