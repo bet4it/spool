@@ -452,6 +452,27 @@ export function makeDb(state: FakeDbState = emptyState()): {
             .map((s) => ({ id: s.id }))
           return { results: items as T[] }
         }
+        if (/^SELECT id, title, published_at, version FROM published_shares WHERE user_id = \? AND visibility = \? AND revoked_at IS NULL AND \(expires_at IS NULL OR expires_at > \?\) ORDER BY published_at DESC LIMIT \?/i.test(sql)) {
+          const [uid, vis, now, limit] = params as [string, string, number, number]
+          const items = state.published_shares
+            .filter(
+              (s) =>
+                s.user_id === uid &&
+                s.visibility === vis &&
+                s.revoked_at === null &&
+                (s.expires_at === null || s.expires_at > now),
+            )
+            .slice()
+            .sort((a, b) => b.published_at - a.published_at)
+            .slice(0, limit)
+            .map((s) => ({
+              id: s.id,
+              title: s.title,
+              published_at: s.published_at,
+              version: s.version,
+            }))
+          return { results: items as T[] }
+        }
         if (/^SELECT user_id, ip_hash, ua_hash, action, target_id, details_json, ts FROM audit_log ORDER BY ts DESC LIMIT \?/i.test(sql)) {
           const [limit] = params as [number]
           const items = state.audit
