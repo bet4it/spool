@@ -13,6 +13,10 @@ export default function LabsTab() {
   const { t } = useTranslation()
   const shareOn = useFeature('share')
   const securityOn = useSecurityEnabled()
+  // sharePublish is intentionally NOT rendered here pre-launch — see the
+  // comment near DEV_DEFAULT_ON in featureFlags.ts. To dev-test the
+  // remote publish surface, set VITE_FEATURE_SHAREPUBLISH=1 when running
+  // `pnpm dev`. The Labs row will be restored at GA.
 
   // The Security toggle is backed by the general `agents.json` config
   // (not localStorage like the LabsFlags) so the main-process scan
