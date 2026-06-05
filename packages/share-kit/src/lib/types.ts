@@ -59,7 +59,7 @@ export interface Conversation {
   title: string
   /** Public share URL when applicable. Null for file origins. */
   shareUrl: string | null
-  /** Hosted spool.share short URL. Only present after publish (Phase 2+). */
+  /** Hosted spool.pro short URL. Only present after publish (Phase 2+). */
   shortUrl?: string
   createdAt: string
   wordCount: number
@@ -276,6 +276,52 @@ export interface SpoolDocument {
   conversation: Conversation
   opts: EditorOpts
   exportedAt: string
+}
+
+/** Wire-format snapshot served by the share-backend reader endpoint.
+ *  Mirrors `packages/app/src/shared/share-publish.ts` — kept here so the
+ *  `spool.pro` web reader can depend on share-kit alone. The desktop
+ *  publish IPC owns the editor-side authoritative copy; if the two ever
+ *  drift, the backend's zod validator in
+ *  `packages/share-backend/src/publish/validators.ts` is canonical. */
+export type SnapshotTurnRole = 'user' | 'assistant' | 'system' | 'tool'
+
+export interface SnapshotTurn {
+  id: string
+  role: SnapshotTurnRole
+  content: string
+  /** Informational — true when the publish-time redact pass rewrote
+   *  this turn's body. Reader Phase A doesn't render anything for it;
+   *  reserved for a future "[content was edited by author]" badge. */
+  redacted?: boolean
+}
+
+export interface SnapshotEditorOpts {
+  template: string
+  paper: string
+  typeface: string
+  colorway: string
+  density: 'compact' | 'relaxed'
+  masthead: boolean
+  colophon: boolean
+  avatars: boolean
+  show_byline: boolean
+}
+
+export interface Snapshot {
+  schema_version: 1
+  source: {
+    kind: 'spool-session' | 'imported-file' | 'imported-jsonl'
+    origin_hint?: string
+    captured_at: string
+  }
+  conversation: {
+    title: string
+    turns: SnapshotTurn[]
+    turn_order: string[]
+    hidden_turns: string[]
+  }
+  editor_opts: SnapshotEditorOpts
 }
 
 /** Source-color dot palette, used by the SourceChip component. */
