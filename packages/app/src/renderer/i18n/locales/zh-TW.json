@@ -309,6 +309,13 @@
       "allowlist_scope_everywhere": "全域"
     },
     "account": {
+      "profile_displayName_placeholder": "別人看到的名字",
+      "profile_displayName_error_tooLong": "顯示名稱太長(最多 50 個字元)。",
+      "profile_displayName_error_controlChars": "顯示名稱含有不允許的字元。",
+      "profile_displayName_error_generic": "無法更新顯示名稱",
+      "profile_avatar_error_tooLarge": "圖片過大(最大 2 MB)。",
+      "profile_avatar_error_unsupported": "只接受 PNG、JPEG 和 WebP。",
+      "profile_avatar_error_generic": "無法上傳頭像",
       "handle_title": "Handle",
       "handle_help": "認領一個 handle，即可獲得公開主頁：",
       "handle_placeholder": "your-handle",
@@ -344,7 +351,10 @@
       "deleteConfirm_item_record": "你的帳號記錄將從 spool.pro 刪除",
       "deleteConfirm_footnote": "在冷卻期結束前你可以隨時在此畫面取消。本機的草稿不受影響——它們儲存在本地。",
       "deleteConfirm_confirm": "安排刪除",
-      "deleteConfirm_scheduling": "安排中…"
+      "deleteConfirm_scheduling": "安排中…",
+      "profile_avatar_change": "更換照片",
+      "profile_avatar_remove": "移除照片",
+      "profile_emailLabel": "電子郵件"
     }
   },
   "security": {

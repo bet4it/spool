@@ -30,3 +30,33 @@ export function sharePublicOrigin(
 export function sharePublicUrl(slug: string, env?: Record<string, string | undefined>): string {
   return `${sharePublicOrigin(env)}/s/${encodeURIComponent(slug)}`
 }
+
+/**
+ * Resolve an avatar URL for an `<img src>` tag. The /api/me + /api/profiles
+ * endpoints return either:
+ *   - a relative path like "/api/avatars/<user_id>" (custom upload), OR
+ *   - an absolute URL to the provider CDN (e.g. lh3.googleusercontent.com)
+ *
+ * Relative `/api/*` paths must hit the share-backend origin directly.
+ * In prod the backend and public web share an origin (spool.pro) so
+ * `sharePublicOrigin()` works as a fallback, but in dev they're split
+ * (3002 = share-web vite, 8788 = wrangler) and the share-web vite proxy
+ * only exists when that dev server is actually running. Prefer the
+ * dedicated backend env so the renderer doesn't need a second vite up.
+ */
+export function shareBackendOrigin(
+  env: Record<string, string | undefined> = import.meta.env as Record<string, string | undefined>,
+): string {
+  const fromEnv = env['VITE_SPOOL_SHARE_BACKEND']?.trim()
+  if (fromEnv && fromEnv.length > 0) return fromEnv.replace(/\/$/, '')
+  return sharePublicOrigin(env)
+}
+
+export function resolveAvatarUrl(
+  raw: string,
+  env?: Record<string, string | undefined>,
+): string {
+  if (/^https?:\/\//i.test(raw)) return raw
+  if (!raw.startsWith('/')) return raw
+  return `${shareBackendOrigin(env)}${raw}`
+}

@@ -316,6 +316,13 @@
       "allowlist_scope_everywhere": "Everywhere"
     },
     "account": {
+      "profile_displayName_placeholder": "How others see you",
+      "profile_displayName_error_tooLong": "Display name is too long (max 50 characters).",
+      "profile_displayName_error_controlChars": "Display name contains characters that aren't allowed.",
+      "profile_displayName_error_generic": "Couldn't update display name",
+      "profile_avatar_error_tooLarge": "Image is too large (max 2 MB).",
+      "profile_avatar_error_unsupported": "Only PNG, JPEG, and WebP images are accepted.",
+      "profile_avatar_error_generic": "Couldn't upload avatar",
       "handle_title": "Handle",
       "handle_help": "Claim a handle to get a public profile at",
       "handle_placeholder": "your-handle",
@@ -351,7 +358,10 @@
       "deleteConfirm_item_record": "Your account record is removed from spool.pro",
       "deleteConfirm_footnote": "You can cancel from this screen any time before the cool-off expires. Drafts on this device are unaffected — they live locally.",
       "deleteConfirm_confirm": "Schedule deletion",
-      "deleteConfirm_scheduling": "Scheduling…"
+      "deleteConfirm_scheduling": "Scheduling…",
+      "profile_avatar_change": "Change photo",
+      "profile_avatar_remove": "Remove photo",
+      "profile_emailLabel": "Email"
     }
   },
   "security": {

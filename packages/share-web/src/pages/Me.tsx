@@ -20,6 +20,7 @@ import {
   type MeShareRow,
 } from '../lib/api'
 import { humanDate, humanDateTime } from '../lib/dates'
+import { ProfileEditor } from '../components/ProfileEditor'
 
 // Match the server-side handle regex (share-backend/src/handles.ts).
 // We pre-filter input so check requests + the submit button respond
@@ -511,6 +512,16 @@ export function Me() {
     setState({ kind: 'ok', me: meResult.me, shares })
   }, [])
 
+  // Re-fetch only /api/me (not /me/shares) after a profile edit so the
+  // identity card + ProfileEditor surface reflect the new values
+  // without disturbing the shares listing.
+  const refreshMe = useCallback(async () => {
+    const meResult = await fetchMe()
+    if (meResult.kind === 'ok') {
+      setState((s) => (s.kind === 'ok' ? { ...s, me: meResult.me } : s))
+    }
+  }, [])
+
   useEffect(() => {
     document.title = 'Your account · spool.pro'
     load()
@@ -676,26 +687,44 @@ export function Me() {
         )}
 
         <div className="sw-card w-600">
-          <div className="sw-identity">
-            <Avatar src={me.avatar_url} name={me.name} size={54} />
-            <div className="body">
-              {me.name && <h1 className="name">{me.name}</h1>}
-              {me.handle ? (
-                <p className="handle accent">
-                  <a href={`/@${me.handle}`}>@{me.handle}</a>
-                </p>
-              ) : (
-                <p className="handle">No public handle yet</p>
-              )}
+          {pending ? (
+            // Pending deletion: identity is read-only. Skip the editable
+            // ProfileEditor entirely so the surface communicates that
+            // changes won't survive the grace window.
+            <div className="sw-identity">
+              <Avatar src={me.avatar_url} name={me.display_name} size={54} />
+              <div className="body">
+                <h1 className="name">{me.display_name}</h1>
+                {me.handle ? (
+                  <p className="handle accent">
+                    <a href={`/@${me.handle}`}>@{me.handle}</a>
+                  </p>
+                ) : (
+                  <p className="handle">No public handle yet</p>
+                )}
+              </div>
+              <button
+                type="button"
+                className="sw-btn sw-btn-ghost sw-btn-sm"
+                onClick={onSignOut}
+              >
+                Sign out
+              </button>
             </div>
-            <button
-              type="button"
-              className="sw-btn sw-btn-ghost sw-btn-sm"
-              onClick={onSignOut}
-            >
-              Sign out
-            </button>
-          </div>
+          ) : (
+            <div className="sw-me-header">
+              <div className="sw-me-header-main">
+                <ProfileEditor me={me} onChanged={refreshMe} />
+              </div>
+              <button
+                type="button"
+                className="sw-btn sw-btn-ghost sw-btn-sm"
+                onClick={onSignOut}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
 
           {!me.handle && !pending && (
             <>

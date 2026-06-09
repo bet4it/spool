@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Check } from 'lucide-react'
 import { ConnectCard } from './share-editor/ConnectCard.js'
 import { DeleteAccountConfirmModal } from './DeleteAccountConfirmModal.js'
+import ProfileEditor from './ProfileEditor.js'
 import { useShareAuth } from '../hooks/useShareAuth.js'
 
 // 320ms matches the web /me HandleClaim debounce — see share-web/Me.tsx.
@@ -139,34 +140,10 @@ export default function SettingsAccount() {
 
   return (
     <div className="space-y-6">
-      {/* Identity */}
-      <div className="flex items-center gap-4">
-        {user.avatar_url ? (
-          <img
-            src={user.avatar_url}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="w-12 h-12 rounded-full bg-warm-surface2 dark:bg-dark-surface2"
-          />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-warm-surface2 dark:bg-dark-surface2 flex items-center justify-center text-warm-faint dark:text-dark-muted text-xs">
-            {(user.name ?? user.email).slice(0, 1).toUpperCase()}
-          </div>
-        )}
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-warm-text dark:text-dark-text truncate">
-            {user.name ?? user.email}
-          </div>
-          <div className="text-[11px] font-mono text-warm-faint dark:text-dark-muted truncate">
-            {user.email}
-          </div>
-          {user.handle && (
-            <div className="text-[11px] text-warm-muted dark:text-dark-muted mt-0.5">
-              @{user.handle} · <span className="font-mono">spool.pro/@{user.handle}</span>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Identity + profile customization — avatar, display name,
+       *  email/handle, and the contextual avatar actions all live in
+       *  one row inside <ProfileEditor>. */}
+      <ProfileEditor />
 
       {/* Handle claim */}
       {!user.handle && (
