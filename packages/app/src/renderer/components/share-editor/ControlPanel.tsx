@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   COLORWAYS,
@@ -19,6 +19,7 @@ import {
 } from '@spool/share-kit'
 import { TemplateThumb } from './TemplateThumb.js'
 import { TurnSelector } from './TurnSelector.js'
+import { useProgressiveCount } from './preview-progressive.js'
 
 /** Tiny helper that updates the persisted opt-out lists. Both fields
  *  are kept sorted+deduped to keep diffs/autosave snapshots stable. */
@@ -77,8 +78,24 @@ export function ControlPanel({ convo, opts, setOpts }: Props) {
   // Detection runs over every turn (not the selection) so the user
   // can spot leaks in turns they're about to include. The Body
   // renderer applies the final list per-turn at render time.
-  const pii = useMemo(() => detectPII(convo.turns), [convo.turns])
-  const totalRedactions = pii.groups.reduce((n, g) => n + g.count, 0) + pii.names.length
+  //
+  // Async (post-paint) rather than a render-time useMemo: the first
+  // scan over a multi-thousand-turn session costs hundreds of ms, and
+  // running it inside the editor's first commit stalled the open.
+  // `null` = scan in flight; the Privacy tab shows a scanning hint and
+  // the redact-off warning simply appears once the count is known.
+  // Subsequent runs are near-free (share-kit caches detection per
+  // Turn), so re-scans on conversation change don't flash the hint.
+  const [pii, setPii] = useState<ReturnType<typeof detectPII> | null>(null)
+  useEffect(() => {
+    // The callback is fully synchronous, so clearTimeout alone is a
+    // complete stale-set guard — no alive flag needed.
+    const handle = window.setTimeout(() => setPii(detectPII(convo.turns)), 0)
+    return () => window.clearTimeout(handle)
+  }, [convo.turns])
+  const totalRedactions = pii
+    ? pii.groups.reduce((n, g) => n + g.count, 0) + pii.names.length
+    : 0
 
   return (
     <div className="w-full h-full p-2 pt-0">
@@ -390,6 +407,11 @@ function RedactRow({
   onToggleValue: (value: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  // Expanded value rows mount progressively: a category like
+  // absolute-path can carry thousands of distinct values, and mounting
+  // them in one commit froze the panel on expand. Rows stream in over
+  // a few frames; closing resets to zero via the total clamp.
+  const shownValues = useProgressiveCount(open ? values.length : 0, 0, 400)
   // Header `×N` sums occurrences across duplicates so the user sees
   // how many times sensitive data appears in the source. The
   // expanded list still shows one row per distinct value.
@@ -447,7 +469,7 @@ function RedactRow({
       {open && (
         <div className="px-2.5 pb-2 pt-1 flex flex-col gap-0.5 border-t border-warm-border/40 dark:border-dark-border/40">
           {note && <div className="text-[10.5px] text-warm-faint dark:text-dark-muted py-1">{note}</div>}
-          {values.map((v, i) => {
+          {values.slice(0, shownValues).map((v, i) => {
             const excluded = isValueExcluded(v.value) || kindExcluded
             const interactive = !kindExcluded
             return (
@@ -696,19 +718,24 @@ function PrivacyView({
 }: {
   opts: EditorOpts
   setOpts: (next: EditorOpts) => void
-  pii: ReturnType<typeof detectPII>
+  /** `null` while the initial detection scan is still running. */
+  pii: ReturnType<typeof detectPII> | null
   totalRedactions: number
 }) {
   const { t } = useTranslation()
   // How many sensitive occurrences would be VISIBLE in the shared
   // / exported artifact under the current policy. Drives both the
   // header count line and decides whether to show the Reset button.
+  // While the initial scan is in flight (`pii === null`) the header —
+  // including the master redact toggle, a safety control that must
+  // never disappear — still renders; only the counts and the category
+  // list wait for the scan.
   const excludedKinds = new Set(opts.redactExclude?.kinds ?? [])
   const excludedHashes = new Set(opts.redactExclude?.valueHashes ?? [])
   const isValueAllowed = (v: string) =>
     excludedHashes.size > 0 && excludedHashes.has(hashValueForRedactExclude(v))
   let visibleOccurrences = 0
-  if (opts.redact) {
+  if (opts.redact && pii) {
     for (const g of pii.groups) {
       const kindIsAllowed = excludedKinds.has(g.kind)
       for (const v of g.values) {
@@ -735,7 +762,8 @@ function PrivacyView({
   // user really wants to know "what will leak?" — so only the
   // visible count carries the warning weight.
   let countLabel: string
-  if (totalRedactions === 0) countLabel = t('shareEditorPanel.redact_noneDetected')
+  if (!pii) countLabel = t('shareEditorPanel.privacy_scanning')
+  else if (totalRedactions === 0) countLabel = t('shareEditorPanel.redact_noneDetected')
   else if (!opts.redact) countLabel = t('shareEditorPanel.redact_willBeVisible', { count: totalRedactions })
   else if (visibleOccurrences === 0) countLabel = t('shareEditorPanel.redact_items_other', { count: totalRedactions })
   else countLabel = t('shareEditorPanel.redact_visible', { count: visibleOccurrences })
@@ -809,13 +837,19 @@ function PrivacyView({
        *  stay pinned above. */}
       {opts.redact && (
         <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 pb-4">
-          <RedactSummary
-            groups={pii.groups}
-            authorNames={pii.names}
-            manualValues={pii.manual}
-            opts={opts}
-            setOpts={setOpts}
-          />
+          {pii ? (
+            <RedactSummary
+              groups={pii.groups}
+              authorNames={pii.names}
+              manualValues={pii.manual}
+              opts={opts}
+              setOpts={setOpts}
+            />
+          ) : (
+            <div className="py-6 text-center text-[11px] text-warm-faint dark:text-dark-muted">
+              {t('shareEditorPanel.privacy_scanning')}
+            </div>
+          )}
         </div>
       )}
     </div>

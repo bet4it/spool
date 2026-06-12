@@ -18,13 +18,18 @@
 
 import type { EditorOpts, RedactExclude, Turn } from '@/lib/types'
 import {
-  detectSensitiveSpans,
+  detectSensitiveSpansCached,
   groupBySensitiveKind,
   hashValueForRedactExclude,
   maskValueByKind,
   type SensitiveGroup,
   type SensitiveMatch,
 } from '@spool-lab/redact'
+
+// Re-export so existing share-kit consumers keep their import path;
+// the cache itself lives in @spool-lab/redact so non-React surfaces
+// (publish gate, future CLI/scan callers) share the same hits.
+export { detectSensitiveSpansCached }
 
 /** Synthetic "kind" tags for non-regex sources that the Privacy
  *  panel still wants to surface as filterable rows. Keep these
@@ -57,10 +62,15 @@ export interface PIIDetection {
   all: string[]
 }
 
+// Detection goes through @spool-lab/redact's per-Turn cache: editor
+// surfaces (templates, ControlPanel, autosave, snapshot build, publish
+// gate) all hold the same Turn objects across a session, so a policy
+// toggle re-aggregates cached matches instead of re-scanning every
+// body with the full regex suite.
 export function detectPII(turns: Turn[]): PIIDetection {
   const matches: SensitiveMatch[] = []
   for (const t of turns) {
-    matches.push(...detectSensitiveSpans(t.body))
+    matches.push(...detectSensitiveSpansCached(t))
   }
   const names = Array.from(
     new Set(

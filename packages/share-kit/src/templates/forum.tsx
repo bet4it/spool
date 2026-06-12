@@ -8,8 +8,8 @@
 import { useMemo } from 'react'
 import type { Conversation, EditorOpts } from '@/lib/types'
 import { typefaceFamily } from '@/lib/types'
-import { accentBgFor, templateTokens } from './tokens'
-import { collectRedactList } from './redact'
+import { accentBgFor, templateTokens, bodyStyleVars, BODY_VAR_PROPS, BODY_VAR_BLOCK_BORDER } from './tokens'
+import { collectRedactList, type RedactReplacement } from './redact'
 import { selectSegments } from './selection'
 import { GapMarker } from './gap-marker'
 import { Body } from './body'
@@ -17,17 +17,20 @@ import { Body } from './body'
 interface Props {
   convo: Conversation
   opts: EditorOpts
+  /** Host-provided stable redact list — see TemplateRender's prop doc. */
+  redactList?: RedactReplacement[] | undefined
 }
 
-export function Forum({ convo, opts }: Props) {
+export function Forum({ convo, opts, redactList: injectedRedactList }: Props) {
   const t = templateTokens(opts.paper)
   const accent = opts.accentHex
   const accentBg = accentBgFor(accent)
   const tf = typefaceFamily(opts.typeface)
-  const redactList = useMemo(
+  const computedRedactList = useMemo(
     () => collectRedactList(convo.turns, opts),
     [convo.turns, opts.redactExclude],
   )
+  const redactList = injectedRedactList ?? computedRedactList
   const segments = selectSegments(convo, opts)
   const postGap = opts.density === 'compact' ? 18 : 26
   const innerPad = opts.density === 'compact' ? 12 : 16
@@ -35,6 +38,7 @@ export function Forum({ convo, opts }: Props) {
   return (
     <div
       style={{
+        ...bodyStyleVars({ accent, accentBg, bodyFont: tf, blockBorder: t.border }),
         fontFamily: tf,
         background: t.paper,
         color: t.text,
@@ -206,11 +210,9 @@ export function Forum({ convo, opts }: Props) {
                     <Body
                       text={turn.body}
                       redact={opts.redact ? redactList : undefined}
-                      sansFont={tf}
                       fontSize={13.5}
-                      accent={accent}
-                      accentBg={accentBg}
-                      blockBorder={t.border}
+                      {...BODY_VAR_PROPS}
+                      blockBorder={BODY_VAR_BLOCK_BORDER}
                     />
                   </div>
                 </div>

@@ -1,7 +1,8 @@
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { forwardRef, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MoreHorizontal } from 'lucide-react'
 import {
+  collectRedactList,
   TemplateRender,
   TEMPLATE_RATIO,
   TEMPLATES,
@@ -9,6 +10,7 @@ import {
   type EditorOpts,
 } from '@spool/share-kit'
 import { useHotkeys } from '../../hooks/useHotkeys.js'
+import { useProgressiveCount } from './preview-progressive.js'
 
 export type Zoom = number | 'fit'
 
@@ -43,6 +45,12 @@ type Props = {
   opts: EditorOpts
   zoom: Zoom
   setZoom: (z: Zoom) => void
+  /** Reports whether the canvas currently shows the COMPLETE, up-to-
+   *  date document — all turns mounted AND the deferred render has
+   *  caught up with the latest convo/opts. DOM-capturing consumers
+   *  (PNG / PDF export) must wait for `complete` before reading the
+   *  preview node, or they capture a partially-filled / stale frame. */
+  onRenderState?: ((state: { complete: boolean }) => void) | undefined
 }
 
 /**
@@ -53,18 +61,72 @@ type Props = {
  * scroll.
  */
 export const PreviewPane = forwardRef<HTMLDivElement, Props>(function PreviewPane(
-  { convo, opts, zoom, setZoom },
+  { convo, opts, zoom, setZoom, onRenderState },
   ref,
 ) {
   const { t } = useTranslation()
-  const ratio = TEMPLATE_RATIO[opts.template]
+
+  // Progressive mount + deferred render. `slicedConvo` grows by chunks
+  // until the full document is in; `useDeferredValue` keeps the canvas
+  // re-render interruptible so a redact/opts toggle updates the control
+  // panel immediately while the document refreshes in the background
+  // (the previous frame stays visible — no blank flash).
+  const totalTurns = convo.turns.length
+  const turnCount = useProgressiveCount(totalTurns)
+  const filled = turnCount >= totalTurns
+  const slicedConvo = useMemo(
+    () => (filled ? convo : { ...convo, turns: convo.turns.slice(0, turnCount) }),
+    [convo, filled, turnCount],
+  )
+  // The redact list is computed from the FULL turn list so its identity
+  // is stable across chunk frames. Left to the templates, the list
+  // would recompute per chunk (the sliced turns array is new each
+  // frame), changing every mounted Body's `redact` prop identity and
+  // re-parsing the whole document once per chunk — O(n²) during fill.
+  const fullRedactList = useMemo(
+    () => collectRedactList(convo.turns, opts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [convo.turns, opts.redactExclude],
+  )
+  const renderConvo = useDeferredValue(slicedConvo)
+  const renderOpts = useDeferredValue(opts)
+  const renderRedactList = useDeferredValue(fullRedactList)
+  const renderComplete =
+    filled &&
+    renderConvo === slicedConvo &&
+    renderOpts === opts &&
+    renderRedactList === fullRedactList
+  useEffect(() => {
+    onRenderState?.({ complete: renderComplete })
+  }, [renderComplete, onRenderState])
+
+  // Canvas geometry follows the DEFERRED opts, not the urgent ones:
+  // on a template switch the content takes a moment to catch up, and
+  // resizing the box to the new template's ratio while the old
+  // template's DOM is still committed shows the document mangled into
+  // the wrong aspect for the whole catch-up window.
+  const ratio = TEMPLATE_RATIO[renderOpts.template]
 
   const innerRef = useRef<HTMLDivElement>(null)
   const [naturalH, setNaturalH] = useState(ratio.h)
   useLayoutEffect(() => {
     if (!innerRef.current) return
     setNaturalH(Math.max(ratio.h, innerRef.current.scrollHeight))
-  }, [convo, opts, ratio.h])
+  }, [renderConvo, renderOpts, ratio.h])
+
+  // Size transitions are enabled one frame AFTER the document is fully
+  // committed: gating on the fill counter alone re-armed them on the
+  // same render the counter finished, so the LAST (largest) naturalH
+  // jump still animated — the exact "pumping" the gate exists to avoid.
+  const [sizeTransitions, setSizeTransitions] = useState(false)
+  useEffect(() => {
+    if (!renderComplete) {
+      setSizeTransitions(false)
+      return
+    }
+    const raf = requestAnimationFrame(() => setSizeTransitions(true))
+    return () => cancelAnimationFrame(raf)
+  }, [renderComplete])
 
   // Pan: drag-to-scroll on the empty backdrop / padding around the
   // canvas. Holding Space extends pan over the canvas too — that's
@@ -223,7 +285,7 @@ export const PreviewPane = forwardRef<HTMLDivElement, Props>(function PreviewPan
           {/* Header chrome above the canvas — template name + dims. */}
           <div className="flex items-center gap-2.5 text-[10px] uppercase tracking-[0.08em] font-mono text-warm-muted dark:text-dark-muted">
             <span className="w-4 h-px bg-warm-border dark:bg-dark-border" />
-            {TEMPLATES.find((x) => x.id === opts.template)?.name} · {ratio.w}×{Math.round(naturalH)}
+            {TEMPLATES.find((x) => x.id === renderOpts.template)?.name} · {ratio.w}×{Math.round(naturalH)}
             <span className="w-4 h-px bg-warm-border dark:bg-dark-border" />
           </div>
           {/* Scaled canvas — width/height transition for smooth zoom.
@@ -245,7 +307,13 @@ export const PreviewPane = forwardRef<HTMLDivElement, Props>(function PreviewPan
               height: naturalH * scale,
               boxShadow: '0 2px 6px rgba(0,0,0,.1), 0 20px 50px rgba(0,0,0,.08)',
               borderRadius: 2,
-              transition: 'width 220ms cubic-bezier(.2,.8,.2,1), height 220ms cubic-bezier(.2,.8,.2,1)',
+              // No size transition while the document is still filling
+              // in — the canvas grows once per chunk and animating every
+              // step reads as the page "pumping". Re-armed one frame
+              // after the final commit (see sizeTransitions above).
+              transition: sizeTransitions
+                ? 'width 220ms cubic-bezier(.2,.8,.2,1), height 220ms cubic-bezier(.2,.8,.2,1)'
+                : 'none',
               cursor: spaceHeld || isPanning ? 'inherit' : 'default',
             }}
           >
@@ -258,23 +326,36 @@ export const PreviewPane = forwardRef<HTMLDivElement, Props>(function PreviewPan
                 willChange: 'transform',
               }}
             >
+              {/* data-* attrs mirror the DEFERRED opts so they always
+                  describe the DOM actually committed below — e2e and
+                  styling hooks read them next to the content. The
+                  data-render-complete marker is the e2e wait handle for
+                  "the full, caught-up document is committed". */}
               <div
                 ref={setRefs}
                 data-testid="share-preview-render"
-                data-template={opts.template}
-                data-paper={opts.paper}
-                data-typeface={opts.typeface}
-                data-colorway={opts.colorway}
-                data-density={opts.density}
+                data-template={renderOpts.template}
+                data-paper={renderOpts.paper}
+                data-typeface={renderOpts.typeface}
+                data-colorway={renderOpts.colorway}
+                data-density={renderOpts.density}
+                data-render-complete={renderComplete ? '' : undefined}
                 style={{ width: ratio.w, userSelect: 'text' }}
               >
-                <TemplateRender template={opts.template} convo={convo} opts={opts} />
+                <TemplateRender
+                  template={renderOpts.template}
+                  convo={renderConvo}
+                  opts={renderOpts}
+                  redactList={renderRedactList}
+                />
               </div>
             </div>
           </div>
           {/* Footer chrome below. */}
           <div className="text-[10px] font-mono tracking-[0.04em] text-warm-faint dark:text-dark-muted">
-            1 / 1 · {t('shareEditorPanel.preview_wordCount_other', { count: convo.wordCount })}
+            {filled
+              ? <>1 / 1 · {t('shareEditorPanel.preview_wordCount_other', { count: convo.wordCount })}</>
+              : t('shareEditorPanel.preview_rendering')}
           </div>
         </div>
       </div>

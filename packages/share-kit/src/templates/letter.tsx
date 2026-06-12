@@ -14,8 +14,8 @@
 import { useMemo } from 'react'
 import type { Conversation, EditorOpts } from '@/lib/types'
 import { typefaceFamily } from '@/lib/types'
-import { accentBgFor, templateTokens } from './tokens'
-import { collectRedactList } from './redact'
+import { accentBgFor, templateTokens, bodyStyleVars, BODY_VAR_PROPS } from './tokens'
+import { collectRedactList, type RedactReplacement } from './redact'
 import { selectSegments } from './selection'
 import { GapMarker } from './gap-marker'
 import { Body } from './body'
@@ -23,23 +23,27 @@ import { Body } from './body'
 interface Props {
   convo: Conversation
   opts: EditorOpts
+  /** Host-provided stable redact list — see TemplateRender's prop doc. */
+  redactList?: RedactReplacement[] | undefined
 }
 
-export function Letter({ convo, opts }: Props) {
+export function Letter({ convo, opts, redactList: injectedRedactList }: Props) {
   const t = templateTokens(opts.paper)
   const accent = opts.accentHex
   const accentBg = accentBgFor(accent)
   const tf = typefaceFamily(opts.typeface)
-  const redactList = useMemo(
+  const computedRedactList = useMemo(
     () => collectRedactList(convo.turns, opts),
     [convo.turns, opts.redactExclude],
   )
+  const redactList = injectedRedactList ?? computedRedactList
   const turnGap = opts.density === 'compact' ? 20 : 32
   const segments = selectSegments(convo, opts)
 
   return (
     <div
       style={{
+        ...bodyStyleVars({ accent, accentBg, bodyFont: tf, blockBorder: t.border }),
         fontFamily: tf,
         background: t.paper,
         color: t.text,
@@ -158,9 +162,7 @@ export function Letter({ convo, opts }: Props) {
               <Body
                 text={turn.body}
                 redact={opts.redact ? redactList : undefined}
-                sansFont={tf}
-                accent={accent}
-                accentBg={accentBg}
+                {...BODY_VAR_PROPS}
               />
             </div>
           </div>
