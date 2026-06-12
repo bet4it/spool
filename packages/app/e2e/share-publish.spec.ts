@@ -35,6 +35,8 @@
 // text-based selector would flake the moment the en.json copy edits.
 
 import { test, expect, type Page } from '@playwright/test'
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 import {
   launchApp,
@@ -57,6 +59,18 @@ import en from '../src/renderer/i18n/locales/en.json'
 
 const SESSION_UUID = 'test-session-uuid-001'
 
+// A session carrying a live-looking Stripe key, used only by the
+// high-risk PII gate test. It is injected into THIS suite's claude dir
+// via extraFixtures rather than living in e2e/fixtures/claude-projects/
+// — the shared base fixtures are copied into every launchApp test and
+// MUST stay free of sensitive values, or the Security "empty page"
+// specs scan it and stop reading as clean.
+const PII_SESSION_JSONL = [
+  '{"type":"user","sessionId":"test-session-pii-001","cwd":"/tmp/test-project","uuid":"pii-msg-001","timestamp":"2026-02-01T09:00:00Z","message":{"role":"user","content":"Here is my key so you can test the deploy: sk_live_abcdef1234567890ABCDEF"}}',
+  '{"type":"assistant","uuid":"pii-msg-002","parentUuid":"pii-msg-001","timestamp":"2026-02-01T09:00:05Z","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Thanks — I\'ll wire the deploy step. You should rotate that credential after we finish."}]}}',
+  '',
+].join('\n')
+
 let mock: SharePublishMockHandle
 let ctx: AppContext
 
@@ -65,6 +79,11 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     extraEnv: {
       SPOOL_SHARE_BACKEND: mock.baseUrl,
+    },
+    extraFixtures: ({ claudeDir }) => {
+      const dir = join(claudeDir, 'test-project')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'test-session-pii.jsonl'), PII_SESSION_JSONL, 'utf8')
     },
   })
 })
@@ -187,6 +206,86 @@ test('Cancel on the unpublish modal leaves the share live', async () => {
   await expect(
     window.locator('[data-testid="share-menu-manage-view"]'),
   ).toBeVisible()
+  const shares = Array.from(mock.state.shares.values())
+  expect(shares).toHaveLength(1)
+  expect(shares[0]!.revoked_at).toBeNull()
+})
+
+test('High-risk PII gate: override does not re-arm the same "Publish anyway" button', async () => {
+  // Regression for the single-misclick credential-publish bypass. Before
+  // the override, the only action is "Publish anyway" (the override
+  // button, testid share-menu-confirm-anyway). After clicking it, the
+  // live-publish button must be a DISTINCT control — different testid AND
+  // different label — so a second click on the same spot can't publish
+  // unredacted secrets.
+  const { window } = ctx
+  await waitForSync(window)
+  await openShareEditorFromSessionDetail(window, 'test-session-pii-001')
+  // The default redact policy would mask the Stripe key, so the gate
+  // never fires. Open the control panel's Privacy tab and turn redaction
+  // OFF to surface the high-risk match the same way a user opting out of
+  // redaction would.
+  await window.locator('[data-testid="share-editor-view-privacy"]').click()
+  await window.locator('[data-testid="share-editor-toggle-redact"]').click()
+  await window.locator('[data-testid="share-menu-trigger"]').click()
+  await window.locator('[data-testid="share-menu-popover"]').waitFor({ state: 'visible' })
+  await window.locator('[data-testid="connect-card-signin"]').click()
+  await window
+    .locator('[data-testid="share-menu-form"]')
+    .waitFor({ state: 'visible', timeout: 5_000 })
+
+  // The high-risk warning blocks publish: only the override button is
+  // present; the normal submit button is not yet rendered.
+  await expect(window.locator('[data-testid="share-menu-pii-high"]')).toBeVisible()
+  const override = window.locator('[data-testid="share-menu-confirm-anyway"]')
+  await expect(override).toBeVisible()
+  await expect(override).toHaveText(en.shareEditor.publishTab.publishAnyway)
+  await expect(window.locator('[data-testid="share-menu-submit"]')).toHaveCount(0)
+  await expect(window.locator('[data-testid="share-menu-submit-unredacted"]')).toHaveCount(0)
+
+  // Acknowledge the override. The live-publish control is now a SEPARATE
+  // button with a distinct testid + label — not the "Publish anyway" text
+  // sitting under the cursor.
+  await override.click()
+  await expect(window.locator('[data-testid="share-menu-confirm-anyway"]')).toHaveCount(0)
+  const confirm = window.locator('[data-testid="share-menu-submit-unredacted"]')
+  await expect(confirm).toBeVisible()
+  await expect(confirm).toHaveText(en.shareEditor.publishTab.publishUnredacted)
+  expect(en.shareEditor.publishTab.publishUnredacted).not.toBe(
+    en.shareEditor.publishTab.publishAnyway,
+  )
+  // Nothing published yet — the override click alone did not submit.
+  expect(mock.state.shares.size).toBe(0)
+
+  // The explicit confirm publishes.
+  await confirm.click()
+  await expect(
+    window.locator('[data-testid="share-menu-manage-view"]'),
+  ).toBeVisible({ timeout: 10_000 })
+  expect(mock.state.shares.size).toBe(1)
+})
+
+test('Unpublish with an expired session (401) shows the sign-in recovery copy, not a raw status', async () => {
+  // Regression for the revoke-401 path: main clears the token (so the UI
+  // can transition to signed-out) and the modal must surface the human
+  // "session expired — sign in again" copy instead of the raw "revoke 401"
+  // string with no recovery path.
+  const { window } = ctx
+  await signInAndPublish(window)
+
+  mock.state.failures.revoke = 401
+  await window.locator('[data-testid="share-menu-unpublish"]').click()
+  await expect(window.locator('[data-testid="unpublish-confirm"]')).toBeVisible()
+  await window.locator('[data-testid="unpublish-confirm-yes"]').click()
+
+  // The modal stays open carrying the mapped error — same i18n key the
+  // publish path uses — and the share is untouched (revoke never landed).
+  const modal = window.locator('[data-testid="unpublish-confirm"]')
+  await expect(modal).toContainText(en.shareEditor.publishTab.error_sessionExpired, {
+    timeout: 5_000,
+  })
+  // The raw status string must NOT leak through.
+  await expect(modal).not.toContainText('revoke 401')
   const shares = Array.from(mock.state.shares.values())
   expect(shares).toHaveLength(1)
   expect(shares[0]!.revoked_at).toBeNull()

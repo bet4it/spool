@@ -298,7 +298,7 @@ export function PublishTab({
           ) : (
             <button
               type="button"
-              data-testid="share-menu-submit"
+              data-testid={high.length > 0 ? 'share-menu-submit-unredacted' : 'share-menu-submit'}
               onClick={() => { void handlePublish() }}
               disabled={publishing || !pending}
               className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-medium text-white transition-opacity disabled:opacity-60 disabled:cursor-not-allowed ${
@@ -311,7 +311,15 @@ export function PublishTab({
                 ? <><Loader2 size={12} strokeWidth={1.8} className="animate-spin" aria-hidden />{t('shareEditor.publishTab.publishing')}</>
                 : error
                   ? t('shareEditor.publishTab.tryAgain')
-                  : <><Send size={12} strokeWidth={1.8} aria-hidden />{high.length > 0 ? t('shareEditor.publishTab.publishAnyway') : t('shareEditor.publishTab.publish')}</>
+                  // After the high-risk override, the submit button must NOT
+                  // re-use the "Publish anyway" label — that's the same text
+                  // and same spot as the override button, so a second click
+                  // on the same pixel would publish unredacted credentials.
+                  // Switch to an explicit "Publish unredacted" confirm so the
+                  // live-publish click is visibly distinct from the override.
+                  : high.length > 0
+                    ? <><AlertTriangle size={12} strokeWidth={1.8} aria-hidden />{t('shareEditor.publishTab.publishUnredacted')}</>
+                    : <><Send size={12} strokeWidth={1.8} aria-hidden />{t('shareEditor.publishTab.publish')}</>
               }
             </button>
           )
@@ -348,7 +356,7 @@ function VisibilityCard({
       data-testid={testId}
       onClick={onSelect}
       disabled={disabled}
-      className={`relative text-left rounded-md p-2.5 border transition-colors disabled:cursor-not-allowed ${
+      className={`relative flex flex-col text-left rounded-md p-2.5 border transition-colors disabled:cursor-not-allowed ${
         checked
           ? 'border-accent dark:border-accent-dark bg-accent-bg dark:bg-accent-bg-dark'
           : disabled
@@ -356,7 +364,7 @@ function VisibilityCard({
             : 'border-warm-border dark:border-dark-border hover:border-warm-border2 dark:hover:border-dark-border2'
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex w-full items-start justify-between gap-2">
         <span className={`inline-flex w-7 h-7 items-center justify-center rounded-md ${
           checked
             ? 'bg-accent text-white dark:bg-accent-dark'
