@@ -892,6 +892,7 @@ export default function App() {
             claudeCount={status?.claudeSessions ?? null}
             codexCount={status?.codexSessions ?? null}
             geminiCount={status?.geminiSessions ?? null}
+            antigravityCount={status?.antigravitySessions ?? null}
             opencodeCount={status?.opencodeSessions ?? null}
             themeEditor={themeEditor}
             onThemeEditorChange={setThemeEditor}
@@ -1088,6 +1089,7 @@ export default function App() {
           claudeCount={status?.claudeSessions ?? null}
           codexCount={status?.codexSessions ?? null}
           geminiCount={status?.geminiSessions ?? null}
+          antigravityCount={status?.antigravitySessions ?? null}
           opencodeCount={status?.opencodeSessions ?? null}
           themeEditor={themeEditor}
           onThemeEditorChange={setThemeEditor}
