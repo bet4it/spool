@@ -33,7 +33,9 @@ export function getSessionRoots(source: SessionSource): string[] {
   }
 
   if (source === 'gemini') {
-    return dedupePaths([normalizeSourceRoot('gemini', join(getGeminiBaseDir(), 'tmp'))])
+    return dedupePaths([
+      normalizeSourceRoot('gemini', join(getGeminiBaseDir(), 'tmp')),
+    ])
   }
 
   if (source === 'opencode') {
@@ -81,11 +83,15 @@ export function getSessionWatchPatterns(
   source: SessionSource,
   roots = getSessionRoots(source),
 ): string[] {
-  const pattern = source === 'gemini'
-    ? 'session-*.json'
-    : source === 'opencode'
-      ? OPENCODE_DB_NAME
-      : '*.jsonl'
+  if (source === 'gemini') {
+    return roots.flatMap(root => [
+      join(root, '**', 'session-*.json'),
+      join(root, '**', 'session-*.jsonl'),
+    ])
+  }
+  const pattern = source === 'opencode'
+    ? OPENCODE_DB_NAME
+    : '*.jsonl'
   return roots.map(root => join(root, '**', pattern))
 }
 
@@ -100,6 +106,9 @@ function splitConfiguredPaths(value: string): string[] {
 function normalizeSourceRoot(source: SessionSource, filePath: string): string {
   const resolvedPath = resolve(expandHome(filePath))
   if (source === 'gemini') {
+    if (basename(resolvedPath) === 'tmp') {
+      return resolvedPath
+    }
     if (basename(resolvedPath) === '.gemini' || existsSync(join(resolvedPath, 'tmp'))) {
       return join(resolvedPath, 'tmp')
     }
@@ -155,9 +164,15 @@ function getOpenCodeBaseDir(): string {
 export function isSessionFileForSource(source: SessionSource, filePath: string, root: string): boolean {
   if (!isWithinRoot(filePath, root)) return false
   if (source === 'gemini') {
-    return filePath.endsWith('.json')
-      && basename(filePath).startsWith('session-')
-      && /(?:^|\/)chats\//.test(filePath)
+    if (!filePath.endsWith('.json') && !filePath.endsWith('.jsonl')) return false
+    if (!basename(filePath).startsWith('session-')) return false
+    if (!/(?:^|\/)chats\//.test(filePath)) return false
+    // Resuming a legacy session in gemini-cli ≥0.39 migrates it to a sibling
+    // .jsonl with the same basename and sessionId, leaving the stale .json in
+    // place. Index only the live .jsonl — syncing both makes the two files
+    // clobber each other's session row via UNIQUE(session_uuid) on every scan.
+    if (filePath.endsWith('.json') && existsSync(`${filePath}l`)) return false
+    return true
   }
   if (source === 'opencode') {
     return isOpenCodeDatabaseFile(filePath)
