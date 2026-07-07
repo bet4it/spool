@@ -11,8 +11,10 @@
 //     e2e-mode entry is dead-code-eliminated from production bundles
 //     and an invariant test (e2e-mode/e2e-mode-clean.test.ts) keeps
 //     it that way.
-//   - The signed-in publish form: visibility radios,
-//     Publish button, the spinner during in-flight publish
+//   - The signed-in publish form: Publish button, the spinner during
+//     in-flight publish (the visibility picker is gated off at launch
+//     — SHOW_VISIBILITY_PICKER in PublishTab.tsx — so the form must
+//     NOT render it)
 //   - The post-publish manage view: URL string with copy-link, the
 //     Unpublish action + the dedicated confirm modal (regression for
 //     the destructive-action discipline added in PR #371)
@@ -124,12 +126,54 @@ test('Sign-in transitions the popover to the publish form', async () => {
   await expect(
     window.locator('[data-testid="share-menu-form"]'),
   ).toBeVisible({ timeout: 5_000 })
+  // Profiles are cut from launch: the visibility picker must stay
+  // hidden and every publish goes out link-only (asserted on the mock
+  // backend in the publish test below). The snapshot summary card
+  // replaces the picker as the form's body.
   await expect(
     window.locator('[data-testid="share-menu-visibility-link-only"]'),
+  ).toHaveCount(0)
+  await expect(
+    window.locator('[data-testid="share-menu-snapshot-card"]'),
   ).toBeVisible()
   await expect(
     window.locator('[data-testid="share-menu-submit"]'),
   ).toBeEnabled()
+})
+
+test('Settings → Account offers no handle claim while profiles are cut', async () => {
+  const { window } = ctx
+  await signInAndOpenPublishForm(window)
+  await window.keyboard.press('Escape')
+  await window.locator('[data-testid="share-editor-back"]').click()
+
+  await window.locator('[data-testid="settings-button"]').click()
+  await expect(window.locator('[data-testid="settings-panel"]')).toBeVisible()
+  // The Account tab label is the hardcoded fallbackLabel (no i18n key
+  // authored yet), so the text match is stable — see SettingsPanel
+  // TAB_DEFS.
+  await window.getByRole('button', { name: 'Account', exact: true }).click()
+
+  // Signed in without a handle — the pre-cut UI showed the claim
+  // input here. Sign-out row proves the pane rendered (absence of the
+  // input isn't a pass if the whole pane failed to mount).
+  await expect(
+    window.locator('[data-testid="settings-account-signout"]'),
+  ).toBeVisible()
+  await expect(
+    window.locator('[data-testid="settings-account-handle-input"]'),
+  ).toHaveCount(0)
+
+  // The delete-account confirm must not mention a handle either: it
+  // renders exactly the two bullets that survive the profile cut.
+  await window.locator('[data-testid="settings-account-delete"]').click()
+  const modal = window.locator('[data-testid="delete-account-confirm"]')
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('ul > li')).toHaveCount(2)
+  await expect(modal.locator('ul')).not.toContainText(
+    en.settings.account.deleteConfirm_item_handle,
+  )
+  await window.locator('[data-testid="delete-account-confirm-cancel"]').click()
 })
 
 test('Publish lands in the manage view with slug + copy-link + unpublish', async () => {
@@ -400,7 +444,10 @@ test('Published tab lists a live share with open/copy/unpublish affordances', as
 test('Row menu lists a share on the profile and back', async () => {
   const { window } = ctx
   // Handle must exist before sign-in so /api/me carries it — listing
-  // is gated on it at both the menu and the backend.
+  // is gated on it at both the menu and the backend. At launch no
+  // user can hold a handle (profiles are cut; claim is gated off
+  // server-side), so this covers the kept-but-dark code path that
+  // comes back with the PROFILES_ENABLED flip.
   mock.state.user.handle = 'e2e-user'
   await signInAndPublish(window)
 
