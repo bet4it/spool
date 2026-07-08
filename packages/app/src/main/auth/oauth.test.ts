@@ -21,6 +21,19 @@ vi.mock('electron', () => ({
       void realFetch(cb.toString()).catch(() => undefined)
     }),
   },
+  // oauth.ts routes its outbound requests through robustFetch, whose
+  // first transport is net.fetch (system-proxy support). Forward to
+  // globalThis.fetch so the per-test spies below keep intercepting the
+  // token exchange + backend sign-in; the fallback transports (which
+  // would touch `session`) never engage because the first one works.
+  net: {
+    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+  },
+  session: {
+    fromPartition: () => {
+      throw new Error('fallback transport engaged unexpectedly in tests')
+    },
+  },
 }))
 
 describe('signInWith (loopback OAuth orchestrator)', () => {
@@ -66,6 +79,12 @@ describe('signInWith (loopback OAuth orchestrator)', () => {
       if (url.startsWith('http://127.0.0.1')) {
         // Loopback: delegate to the real fetch (mock should be transparent here).
         return realFetch(input as Parameters<typeof realFetch>[0], init)
+      }
+      // fetchOnce probes each target's origin with a GET before the
+      // real request; any HTTP response (status irrelevant) selects
+      // the transport.
+      if (url === 'https://oauth2.googleapis.com/' || url === 'https://example.test/') {
+        return new Response('probe', { status: 404 })
       }
       if (url.startsWith('https://oauth2.googleapis.com/token')) {
         const body = init?.body as URLSearchParams
