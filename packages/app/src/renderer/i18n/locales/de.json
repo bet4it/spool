@@ -160,7 +160,6 @@
     "tab_shortcuts": "Tastenkürzel",
     "tab_sources": "Quellen",
     "tab_agent": "Agent",
-    "tab_labs": "Labs",
     "tab_security": "Sicherheit",
     "language_label": "Sprache",
     "language_help": "Wählen Sie die in der Spool-Oberfläche verwendete Sprache.",
@@ -205,6 +204,7 @@
     "about_section": "Über",
     "about_tagline": "Spool – eine lokale Suchmaschine für Ihre Gedanken.",
     "about_trademark": "Spool™ ist eine Marke von TypeSafe Limited.",
+    "about_feedback": "Feedback geben",
     "shortcuts_group_global": "Global",
     "shortcuts_group_search": "Suche",
     "shortcuts_group_session": "Sitzung",
@@ -891,14 +891,5 @@
   },
   "palette": {
     "toggleOptions": "Optionen anzeigen"
-  },
-  "labs": {
-    "intro": "Frühe Features. Können sich vor der Veröffentlichung ändern oder wegfallen.",
-    "share": {
-      "title": "Sitzungen teilen",
-      "description": "Exportiere jede Sitzung als ansprechendes Bild, PDF oder Markdown — mit Datenschutzoptionen.",
-      "feedback": "Sag uns, wie es sich anfühlt",
-      "disabled_toast": "Teilen ist aus."
-    }
   }
 }
