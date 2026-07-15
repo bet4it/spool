@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildFtsQuery, buildSearchPlan, selectFtsTableKind, shouldUseSessionFallback } from './search-query.js'
-import { buildLikeSnippet, searchFragments } from './queries.js'
+import { buildFtsQuery, buildPreviewFtsPlan, buildSearchPlan, selectFtsTableKind, shouldUseSessionFallback } from './search-query.js'
+import { buildLikeSnippet, searchFragments, searchSessionPreview } from './queries.js'
 
 const dbs: Database.Database[] = []
 
@@ -40,6 +40,39 @@ describe('buildFtsQuery', () => {
     expect(shouldUseSessionFallback('查看 4242')).toBe(true)
     expect(shouldUseSessionFallback('查看一下 4242')).toBe(false)
     expect(shouldUseSessionFallback('"查看 4242"')).toBe(false)
+  })
+
+  it('builds prefix plans for unicode text and trigram plans for CJK', () => {
+    expect(buildPreviewFtsPlan('auth middle')).toEqual({
+      tableKind: 'unicode',
+      query: '"auth"* AND "middle"*',
+      anyTermQuery: '"auth"* OR "middle"*',
+    })
+    expect(buildPreviewFtsPlan('查看一下 4242')).toEqual({
+      tableKind: 'trigram',
+      query: '"查看一下" AND "4242"',
+      anyTermQuery: '"查看一下" OR "4242"',
+    })
+    expect(buildPreviewFtsPlan('查看 42')).toBeNull()
+  })
+
+  it('falls back to LIKE when a trigram plan would carry a sub-trigram term', () => {
+    // Trigram phrases never match below 3 codepoints and plan terms are
+    // ANDed, so one short term would zero out the whole preview.
+    expect(buildPreviewFtsPlan('错误码 42')).toBeNull()
+    expect(buildPreviewFtsPlan('迁移记录 v2')).toBeNull()
+    expect(buildPreviewFtsPlan('错误码 日志文件')).toEqual({
+      tableKind: 'trigram',
+      query: '"错误码" AND "日志文件"',
+      anyTermQuery: '"错误码" OR "日志文件"',
+    })
+  })
+
+  it('falls back to LIKE when a term has no unicode61 tokens', () => {
+    // `=>` tokenizes to nothing under unicode61; the resulting empty phrase
+    // matches no rows and would AND-away every other term.
+    expect(buildPreviewFtsPlan('foo =>')).toBeNull()
+    expect(buildPreviewFtsPlan('null ??')).toBeNull()
   })
 })
 
@@ -110,6 +143,103 @@ describe('searchFragments', () => {
     )
     expect(results.find(result => result.sessionTitle === 'title-and-message-change-4242')).toBeDefined()
   })
+
+  it('preserves source, project scope, date, and pin filters', () => {
+    const db = createSearchTestDb()
+    db.prepare('INSERT INTO pins (session_uuid) VALUES (?)').run('session-review-4242')
+
+    expect(searchFragments(db, '4242', { source: 'codex' })).toEqual([])
+    expect(searchFragments(db, '4242', { source: 'claude' })).toHaveLength(4)
+    expect(searchFragments(db, '4242', { identityKey: '/tmp/test-project' })).toHaveLength(4)
+    expect(searchFragments(db, '4242', { identityKey: '/tmp/other-project' })).toEqual([])
+    expect(searchFragments(db, '4242', { since: '2026-04-05T10:30:00Z' }).map(result => result.sessionUuid)).toEqual([
+      'session-title-message-4242',
+    ])
+    expect(searchFragments(db, '4242', { onlyPinned: true }).map(result => result.sessionUuid)).toEqual([
+      'session-review-4242',
+    ])
+  })
+})
+
+describe('searchSessionPreview', () => {
+  it('does not scan for one-character ascii queries', () => {
+    const db = createSearchTestDb()
+    expect(searchSessionPreview(db, '4')).toEqual([])
+  })
+
+  it('serves single CJK character queries through the LIKE fallback', () => {
+    // A single Han character is a meaningful query; before the FTS preview
+    // landed these went through the LIKE scan and must keep working.
+    const db = createSearchTestDb()
+    const results = searchSessionPreview(db, '查', { limit: 5 })
+    expect(results.length).toBeGreaterThan(0)
+  })
+
+  it('finds sessions when a CJK query carries a short latin or digit term', () => {
+    const db = createSearchTestDb()
+    insertSession(db, {
+      id: 6,
+      uuid: 'session-error-42',
+      filePath: '/tmp/test-project/error-42.jsonl',
+      title: 'error-code-42',
+      startedAt: '2026-04-05T13:00:00Z',
+      messages: ['错误码 42 出现在同步日志里。'],
+    })
+
+    const results = searchSessionPreview(db, '错误码 42', { limit: 5 })
+    expect(results.map(result => result.sessionUuid)).toContain('session-error-42')
+  })
+
+  it('finds sessions when one term is punctuation-only', () => {
+    const db = createSearchTestDb()
+    insertSession(db, {
+      id: 7,
+      uuid: 'session-arrow-fn',
+      filePath: '/tmp/test-project/arrow-fn.jsonl',
+      title: 'arrow-fn-refactor',
+      startedAt: '2026-04-05T14:00:00Z',
+      messages: ['const pick = foo => bar'],
+    })
+
+    const results = searchSessionPreview(db, 'foo =>', { limit: 5 })
+    expect(results.map(result => result.sessionUuid)).toContain('session-arrow-fn')
+  })
+
+  it('finds indexed partial tokens and preserves title weighting', () => {
+    const db = createSearchTestDb()
+    const results = searchSessionPreview(db, 'review chan', { limit: 5 })
+
+    expect(results[0]?.sessionTitle).toBe('review-change-4242')
+  })
+
+  it('uses the trigram index for CJK previews', () => {
+    const db = createSearchTestDb()
+    const results = searchSessionPreview(db, '查看一下 4242', { limit: 5 })
+
+    expect(results.map(result => result.sessionTitle)).toEqual([
+      'exact-phrase-change-4242',
+      'review-change-4242',
+    ])
+  })
+
+  it('sees newly indexed sessions without a stale preview cache', () => {
+    const db = createSearchTestDb()
+    expect(searchSessionPreview(db, 'freshly indexed', { limit: 5 })).toEqual([])
+
+    insertSession(db, {
+      id: 5,
+      uuid: 'session-fresh-index',
+      filePath: '/tmp/test-project/fresh-index.jsonl',
+      title: 'freshly indexed session',
+      startedAt: '2026-04-05T12:00:00Z',
+      messages: ['freshly indexed content is immediately searchable'],
+    })
+
+    const results = searchSessionPreview(db, 'freshly indexed', { limit: 5 })
+    expect(results).toHaveLength(1)
+    expect(results[0]?.sessionUuid).toBe('session-fresh-index')
+    expect(results[0]?.snippet).toContain('<mark>freshly</mark> <mark>indexed</mark>')
+  })
 })
 
 function createSearchTestDb(): Database.Database {
@@ -127,7 +257,8 @@ function createSearchTestDb(): Database.Database {
       source_id INTEGER NOT NULL,
       slug TEXT NOT NULL,
       display_path TEXT NOT NULL,
-      display_name TEXT NOT NULL
+      display_name TEXT NOT NULL,
+      identity_key TEXT
     );
 
     CREATE TABLE sessions (
@@ -165,6 +296,10 @@ function createSearchTestDb(): Database.Database {
       user_text TEXT NOT NULL DEFAULT '',
       assistant_text TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE pins (
+      session_uuid TEXT PRIMARY KEY
     );
 
     CREATE VIRTUAL TABLE session_search_fts USING fts5(
@@ -230,8 +365,8 @@ function createSearchTestDb(): Database.Database {
 
   db.prepare('INSERT INTO sources (id, name) VALUES (1, ?)').run('claude')
   db.prepare(`
-    INSERT INTO projects (id, source_id, slug, display_path, display_name)
-    VALUES (1, 1, 'test-project', '/tmp/test-project', 'test-project')
+    INSERT INTO projects (id, source_id, slug, display_path, display_name, identity_key)
+    VALUES (1, 1, 'test-project', '/tmp/test-project', 'test-project', '/tmp/test-project')
   `).run()
 
   insertSession(db, {
