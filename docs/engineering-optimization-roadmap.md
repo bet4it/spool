@@ -1,9 +1,10 @@
 # Spool Engineering Optimization Roadmap
 
-> Status: Proposed  
-> Updated: 2026-07-12  
+> Status: Implemented
+> Updated: 2026-07-12
 > Base: `main@049c4b2`  
-> Intended implementer: `sol high`
+> Implementation: stacked branches `feat/typecheck-baseline` through
+> `feat/dependency-maintenance`
 
 ## 1. Objective
 
@@ -547,6 +548,52 @@ Acceptance criteria:
 
 Goal: make future upgrades smaller and safer.
 
+Implementation status: complete on `feat/dependency-maintenance`.
+
+Implementation notes:
+
+1. Add weekly Dependabot version updates at the pnpm workspace root. Dependabot
+   uses the `npm` ecosystem for pnpm lockfiles and discovers all workspace
+   manifests from that root.
+2. Group patch/minor updates into four explicit risk lanes: tooling,
+   Electron/native, ACP, and renderer/framework. The tooling catch-all excludes
+   every higher-risk runtime family, so a dependency can never drift into the
+   broad group because of manifest placement.
+3. Leave major updates and security updates ungrouped. Electron, ACP, React,
+   Vite, Shiki, Void, and i18next therefore produce independently reviewable
+   PRs with their own release, E2E, or migration evidence.
+4. Set the open PR limit to ten so the four routine groups and isolated majors
+   can coexist without creating an unbounded maintenance queue.
+5. Do not perform the audited Electron 34-to-43 jump in this roadmap. It needs a
+   dedicated branch with staged Electron release notes, native ABI validation,
+   packaged E2E, signing, and CI notarization evidence.
+6. Do not split orchestration modules or add React memoization without a
+   functional ownership boundary or profiler evidence. File size alone does
+   not justify either change.
+7. Debounce session-local find by 120 ms while keeping the controlled input
+   synchronous. The expensive Markdown-to-visible-text projection now runs
+   once after typing settles instead of once per keystroke; the previous
+   query's highlights and count stay visible (dimmed) and navigable until
+   the new projection lands, and only "No matches" waits for the settle.
+
+Verification on 2026-07-12:
+
+- `.github/dependabot.yml` parses as YAML and contains one pnpm-root update
+  entry with four non-overlapping patch/minor risk groups.
+- Every explicitly high-risk package family excluded from the tooling catch-all
+  is owned by exactly one narrower group.
+- Major and security updates have no matching bulk group and remain isolated.
+- Frozen install, nine-package typecheck, type-aware Oxlint, and all unit tests
+  passed. The complete serial app E2E run finished with 166 passed, two
+  retry-passed flaky tests, and one fixture-dependent skip.
+- CLI build passed, the packaged macOS app passed deep strict codesign
+  verification, and the globally linked `sp status` read the 393.6 MB local
+  index after the final Node ABI restore.
+- App passed all 488 unit tests after the session-local debounce change. The 22
+  focused Electron E2E cases for global search and session detail passed,
+  including rendered-Markdown matching, keyboard navigation, and the
+  1,500-message deep-find fixture.
+
 Changes:
 
 1. Add automated dependency update PRs grouped by risk:
@@ -567,6 +614,15 @@ Changes:
    - `packages/core/src/db/queries.ts`
 5. Use React profiling before adding memoization. File size alone is not proof
    of a render bottleneck.
+
+Acceptance criteria:
+
+- [x] Routine patch/minor tooling updates are grouped.
+- [x] Electron/native and ACP updates are separated from general tooling.
+- [x] Renderer/framework updates have an explicit risk lane.
+- [x] High-risk major and security updates remain independently reviewable.
+- [x] No unprofiled module split, memoization, or bulk major upgrade is added.
+- [x] Session-local find does not reparse every loaded message per keystroke.
 
 ## 4. Required Verification Matrix
 
