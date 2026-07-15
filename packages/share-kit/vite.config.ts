@@ -10,7 +10,9 @@ export default defineConfig({
       entryRoot: 'src',
       include: ['src/**/*.ts', 'src/**/*.tsx'],
       exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
-      rollupTypes: true,
+      // Keep the declaration tree instead of API Extractor's bundled rollup;
+      // package entrypoints remain unchanged.
+      bundleTypes: false,
     }),
   ],
   resolve: {
