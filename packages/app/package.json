@@ -104,11 +104,6 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "resources/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true,
       "target": [
         {
           "target": "dmg",
@@ -133,9 +128,7 @@
         }
       ]
     },
-    "afterAllArtifactBuild": "build/notarize-dmg.js",
     "dmg": {
-      "sign": true,
       "title": "Spool",
       "iconSize": 80,
       "contents": [
