@@ -3,8 +3,9 @@ import { homedir } from 'node:os'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { SessionSource } from '../types.js'
 import { OPENCODE_DB_NAME, isOpenCodeDatabaseFile } from '../parsers/opencode.js'
+import { getGrokHome, decodeGrokCwdDirname } from '../parsers/grok.js'
 
-const SOURCE_DIR_NAMES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode'>, string> = {
+const SOURCE_DIR_NAMES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode' | 'grok'>, string> = {
   claude: 'projects',
   codex: 'sessions',
 }
@@ -15,14 +16,15 @@ const SOURCE_ENV_VARS: Record<SessionSource, string> = {
   gemini: 'SPOOL_GEMINI_DIR',
   antigravity: 'SPOOL_ANTIGRAVITY_DIR',
   opencode: 'SPOOL_OPENCODE_DIR',
+  grok: 'SPOOL_GROK_DIR',
 }
 
-const SOURCE_DEFAULT_BASES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode'>, string> = {
+const SOURCE_DEFAULT_BASES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode' | 'grok'>, string> = {
   claude: '.claude',
   codex: '.codex',
 }
 
-const SOURCE_PROFILE_BASES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode'>, string> = {
+const SOURCE_PROFILE_BASES: Record<Exclude<SessionSource, 'gemini' | 'antigravity' | 'opencode' | 'grok'>, string> = {
   claude: '.claude-profiles',
   codex: '.codex-profiles',
 }
@@ -45,6 +47,10 @@ export function getSessionRoots(source: SessionSource): string[] {
 
   if (source === 'opencode') {
     return dedupePaths([normalizeSourceRoot('opencode', getOpenCodeBaseDir())])
+  }
+
+  if (source === 'grok') {
+    return dedupePaths([normalizeSourceRoot('grok', join(getGrokHome(), 'sessions'))])
   }
 
   const home = homedir()
@@ -75,9 +81,10 @@ export function detectSessionSource(
     gemini: getSessionRoots('gemini'),
     antigravity: getSessionRoots('antigravity'),
     opencode: getSessionRoots('opencode'),
+    grok: getSessionRoots('grok'),
   },
 ): SessionSource | undefined {
-  for (const source of ['claude', 'codex', 'gemini', 'antigravity', 'opencode'] as const) {
+  for (const source of ['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'grok'] as const) {
     if (sourceRoots[source]?.some(root => isSessionFileForSource(source, filePath, root))) {
       return source
     }
@@ -97,6 +104,9 @@ export function getSessionWatchPatterns(
   }
   if (source === 'antigravity') {
     return roots.map(root => join(root, '**', 'transcript.jsonl'))
+  }
+  if (source === 'grok') {
+    return roots.map(root => join(root, '**', 'chat_history.jsonl'))
   }
   const pattern = source === 'opencode'
     ? OPENCODE_DB_NAME
@@ -137,6 +147,14 @@ function normalizeSourceRoot(source: SessionSource, filePath: string): string {
     if (existsSync(join(resolvedPath, '.local', 'share', 'opencode', OPENCODE_DB_NAME))) {
       return join(resolvedPath, '.local', 'share', 'opencode')
     }
+    return resolvedPath
+  }
+
+  if (source === 'grok') {
+    // Grok sessions live at <grok_home>/sessions/{encoded_cwd}/{session_id}/
+    // Accept the sessions dir directly or the grok home (auto-append "sessions").
+    if (basename(resolvedPath) === 'sessions') return resolvedPath
+    if (existsSync(join(resolvedPath, 'sessions'))) return join(resolvedPath, 'sessions')
     return resolvedPath
   }
 
@@ -207,6 +225,14 @@ export function isSessionFileForSource(source: SessionSource, filePath: string, 
   }
   if (source === 'antigravity') {
     return filePath.endsWith('transcript.jsonl')
+  }
+  if (source === 'grok') {
+    // Grok sessions: <root>/<encoded_cwd>/<session_id>/chat_history.jsonl
+    // Exactly three segments relative to root. This avoids matching
+    // other .jsonl files in subdirectories (rewind_points, updates, etc.).
+    if (basename(filePath) !== 'chat_history.jsonl') return false
+    const rel = relative(root, filePath)
+    return rel.length > 0 && rel.split(sep).length === 3
   }
   if (source === 'opencode') {
     return isOpenCodeDatabaseFile(filePath)

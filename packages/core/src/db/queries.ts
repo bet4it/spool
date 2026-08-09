@@ -1197,6 +1197,7 @@ export function getStatus(db: Database.Database): StatusInfo {
   const geminiRow = counts.find(r => r.name === 'gemini')
   const antigravityRow = counts.find(r => r.name === 'antigravity')
   const opencodeRow = counts.find(r => r.name === 'opencode')
+  const grokRow = counts.find(r => r.name === 'grok')
 
   return {
     dbPath: DB_PATH,
@@ -1206,6 +1207,7 @@ export function getStatus(db: Database.Database): StatusInfo {
     geminiSessions: geminiRow?.cnt ?? 0,
     antigravitySessions: antigravityRow?.cnt ?? 0,
     opencodeSessions: opencodeRow?.cnt ?? 0,
+    grokSessions: grokRow?.cnt ?? 0,
     lastSyncedAt: lastSync?.last ?? null,
     dbSizeBytes: getDBSize(),
   }

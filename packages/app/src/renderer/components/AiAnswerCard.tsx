@@ -109,7 +109,7 @@ export default function AiAnswerCard({ answer, streaming, agentName, sources, er
       )}
 
       {/* CTA — only shown when a resume target is wired (i.e. agent has a
-          source we persisted a session row for: claude/codex/gemini/antigravity/opencode). */}
+          source we persisted a session row for: claude/codex/gemini/antigravity/opencode/grok). */}
       {!streaming && answer && onResume && (
         <button
           onClick={onResume}

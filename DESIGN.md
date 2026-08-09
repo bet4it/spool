@@ -91,6 +91,7 @@ Only currently-supported agent sources are listed. New sources arrive via the da
 | Gemini | `#5887D0` | `#8AB0E5` |
 | Antigravity | `#6B5CA5` | `#9B8FD0` |
 | OpenCode | `#8A6F3D` | `#C9A761` |
+| Grok Build | `#4A4A3E` | `#8A8A7A` |
 
 ### Semantic States
 Status colors are warm-tuned to match the rest of the palette — never use Tailwind defaults (`green-500`, `red-500`).

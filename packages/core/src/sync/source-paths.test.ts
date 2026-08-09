@@ -87,6 +87,20 @@ describe('getSessionRoots', () => {
       opencodeDir,
     ])
   })
+
+  test('should resolve Grok home to the sessions directory', () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'spool-grok-source-paths-'))
+    const grokHome = join(baseDir, '.grok')
+    const sessionsDir = join(grokHome, 'sessions')
+    tempDirs.push(baseDir)
+
+    mkdirSync(sessionsDir, { recursive: true })
+    vi.stubEnv('SPOOL_GROK_DIR', grokHome)
+
+    expect(getSessionRoots('grok')).toEqual([
+      sessionsDir,
+    ])
+  })
 })
 
 describe('detectSessionSource', () => {
@@ -98,22 +112,26 @@ describe('detectSessionSource', () => {
     const codexRoot = join(baseDir, 'codex-personal', 'sessions')
     const geminiRoot = join(baseDir, 'gemini', 'tmp')
     const opencodeRoot = join(baseDir, 'opencode')
+    const grokRoot = join(baseDir, 'grok', 'sessions')
     mkdirSync(join(claudeRoot, 'project-a'), { recursive: true })
     mkdirSync(join(codexRoot, '2026', '03', '29'), { recursive: true })
     mkdirSync(join(geminiRoot, 'workspace', 'chats'), { recursive: true })
     mkdirSync(opencodeRoot, { recursive: true })
+    mkdirSync(join(grokRoot, '%2Ftmp%2Fproject', 'session-abc'), { recursive: true })
 
     const sourceRoots = {
       claude: [claudeRoot],
       codex: [codexRoot],
       gemini: [geminiRoot],
       opencode: [opencodeRoot],
+      grok: [grokRoot],
     } as const
 
     expect(detectSessionSource(join(claudeRoot, 'project-a', 'session.jsonl'), sourceRoots)).toBe('claude')
     expect(detectSessionSource(join(codexRoot, '2026', '03', '29', 'rollout.jsonl'), sourceRoots)).toBe('codex')
     expect(detectSessionSource(join(geminiRoot, 'workspace', 'chats', 'session-2026-04-08T00-00-deadbeef.json'), sourceRoots)).toBe('gemini')
     expect(detectSessionSource(join(opencodeRoot, 'opencode.db'), sourceRoots)).toBe('opencode')
+    expect(detectSessionSource(join(grokRoot, '%2Ftmp%2Fproject', 'session-abc', 'chat_history.jsonl'), sourceRoots)).toBe('grok')
     expect(detectSessionSource(join(baseDir, 'other', 'session.jsonl'), sourceRoots)).toBeUndefined()
   })
 
@@ -235,6 +253,14 @@ describe('getSessionWatchPatterns', () => {
     expect(getSessionWatchPatterns('gemini', [geminiRoot])).toEqual([
       join(geminiRoot, '**', 'session-*.json'),
       join(geminiRoot, '**', 'session-*.jsonl'),
+    ])
+  })
+
+  test('watches Grok chat_history.jsonl files', () => {
+    const grokRoot = join('/tmp', 'grok', 'sessions')
+
+    expect(getSessionWatchPatterns('grok', [grokRoot])).toEqual([
+      join(grokRoot, '**', 'chat_history.jsonl'),
     ])
   })
 })

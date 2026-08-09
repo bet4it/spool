@@ -894,6 +894,7 @@ export default function App() {
             geminiCount={status?.geminiSessions ?? null}
             antigravityCount={status?.antigravitySessions ?? null}
             opencodeCount={status?.opencodeSessions ?? null}
+            grokCount={status?.grokSessions ?? null}
             themeEditor={themeEditor}
             onThemeEditorChange={setThemeEditor}
             language={language ?? 'system'}
@@ -1091,6 +1092,7 @@ export default function App() {
           geminiCount={status?.geminiSessions ?? null}
           antigravityCount={status?.antigravitySessions ?? null}
           opencodeCount={status?.opencodeSessions ?? null}
+          grokCount={status?.grokSessions ?? null}
           themeEditor={themeEditor}
           onThemeEditorChange={setThemeEditor}
           language={language ?? 'system'}

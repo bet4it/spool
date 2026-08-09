@@ -18,6 +18,7 @@ const SOURCE_LABEL: Record<SessionSource, string> = {
   gemini: 'Gemini',
   antigravity: 'Antigravity',
   opencode: 'OpenCode',
+  grok: 'Grok',
 }
 
 interface ComposeOpts {

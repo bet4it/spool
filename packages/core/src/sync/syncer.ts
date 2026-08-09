@@ -14,6 +14,7 @@ import {
   OPENCODE_INDEX_VERSION,
   parseOpenCodeSessionFilePath,
 } from '../parsers/opencode.js'
+import { loadGrokSession, GROK_INDEX_VERSION, decodeGrokCwdDirname } from '../parsers/grok.js'
 import type { SessionSource } from '../types.js'
 import { getSessionRoots, isSessionFileForSource } from './source-paths.js'
 import {
@@ -81,7 +82,7 @@ export class Syncer {
     const seenPaths = new Set<string>()
     const files: Array<{ path: string; source: SessionSource }> = []
 
-    for (const source of ['claude', 'codex', 'gemini', 'antigravity', 'opencode'] as const) {
+    for (const source of ['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'grok'] as const) {
       for (const dir of getSessionRoots(source)) {
         try { addUniqueFiles(files, seenPaths, collectSessionFiles(dir, source)) } catch { /* dir may not exist */ }
       }
@@ -297,7 +298,9 @@ export class Syncer {
             ? loadGeminiSession(filePath)
             : source === 'antigravity'
               ? loadAntigravitySession(filePath)
-              : loadOpenCodeSession(filePath)
+              : source === 'grok'
+                ? loadGrokSession(filePath)
+                : loadOpenCodeSession(filePath)
 
       if (parseResult.kind !== 'parsed') {
         // The "filtered" path normally removes a session whose source
@@ -539,6 +542,7 @@ function getIndexVersion(source: SessionSource): string {
   if (source === 'gemini') return 'gemini-v2-session-search-fts'
   if (source === 'antigravity') return ANTIGRAVITY_INDEX_VERSION
   if (source === 'opencode') return OPENCODE_INDEX_VERSION
+  if (source === 'grok') return GROK_INDEX_VERSION
   return 'claude-v3-session-search-fts'
 }
 
@@ -638,6 +642,16 @@ function resolveProject(
     const displayPath = cwd || home
     const parts = displayPath.split('/').filter(Boolean)
     const displayName = parts[parts.length - 1] ?? 'opencode'
+    const slug = displayPath.replace(/^\//, '').replace(/\//g, '-') || 'default'
+    return { slug, displayPath, displayName }
+  } else if (source === 'grok') {
+    // ~/.grok/sessions/{encoded_cwd}/{session_id}/chat_history.jsonl
+    // cwd comes from summary.json via the parser. Fall back to decoding
+    // the encoded cwd directory name (URL-decode or .cwd metadata file).
+    const encodedCwdDir = dirname(dirname(filePath))
+    const displayPath = cwd || decodeGrokCwdDirname(encodedCwdDir) || home
+    const parts = displayPath.split('/').filter(Boolean)
+    const displayName = parts[parts.length - 1] ?? 'grok'
     const slug = displayPath.replace(/^\//, '').replace(/\//g, '-') || 'default'
     return { slug, displayPath, displayName }
   }

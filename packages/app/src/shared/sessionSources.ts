@@ -29,6 +29,12 @@ const SESSION_SOURCE_META = {
     color: '#8A6F3D',
     colorDark: '#C9A761',
   },
+  grok: {
+    label: 'Grok Build',
+    shortLabel: 'grok',
+    color: '#4A4A3E',
+    colorDark: '#8A8A7A',
+  },
 } as const
 
 export function getSessionSourceColor(source: string): string {

@@ -33,6 +33,7 @@ interface Props {
   geminiCount: number | null
   antigravityCount: number | null
   opencodeCount: number | null
+  grokCount: number | null
   themeEditor: ThemeEditorStateV1
   onThemeEditorChange: (next: ThemeEditorStateV1) => void
   language: LanguagePreference
@@ -148,6 +149,7 @@ export default function SettingsPanel({
   geminiCount,
   antigravityCount,
   opencodeCount,
+  grokCount,
   themeEditor,
   onThemeEditorChange,
   language,
@@ -242,7 +244,7 @@ export default function SettingsPanel({
               <AppearanceTab themeEditor={themeEditor} onThemeEditorChange={onThemeEditorChange} />
             )}
             {activeTab === 'shortcuts' && <ShortcutsTab />}
-            {activeTab === 'sources' && <SourcesTab claudeCount={claudeCount} codexCount={codexCount} geminiCount={geminiCount} antigravityCount={antigravityCount} opencodeCount={opencodeCount} />}
+            {activeTab === 'sources' && <SourcesTab claudeCount={claudeCount} codexCount={codexCount} geminiCount={geminiCount} antigravityCount={antigravityCount} opencodeCount={opencodeCount} grokCount={grokCount} />}
             {activeTab === 'agent' && <AgentTab />}
             {activeTab === 'account' && <SettingsAccount />}
             {activeTab === 'security' && <SecurityPane />}
@@ -440,12 +442,14 @@ function SourcesTab({
   geminiCount,
   antigravityCount,
   opencodeCount,
+  grokCount,
 }: {
   claudeCount: number | null
   codexCount: number | null
   geminiCount: number | null
   antigravityCount: number | null
   opencodeCount: number | null
+  grokCount: number | null
 }) {
   const { t } = useTranslation()
   return (
@@ -456,6 +460,7 @@ function SourcesTab({
         <BuiltInSource name={getSessionSourceLabel('gemini')} color={getSessionSourceColor('gemini')} count={geminiCount} />
         <BuiltInSource name={getSessionSourceLabel('antigravity')} color={getSessionSourceColor('antigravity')} count={antigravityCount} />
         <BuiltInSource name={getSessionSourceLabel('opencode')} color={getSessionSourceColor('opencode')} count={opencodeCount} />
+        <BuiltInSource name={getSessionSourceLabel('grok')} color={getSessionSourceColor('grok')} count={grokCount} />
       </Section>
     </div>
   )

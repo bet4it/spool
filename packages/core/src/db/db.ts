@@ -80,7 +80,8 @@ export function runMigrations(db: Database.Database): void {
       ('codex',  '~/.codex/sessions'),
       ('gemini', '~/.gemini/tmp'),
       ('antigravity', '~/.gemini/antigravity-cli/brain'),
-      ('opencode', '~/.local/share/opencode/opencode.db');
+      ('opencode', '~/.local/share/opencode/opencode.db'),
+      ('grok', '~/.grok/sessions');
 
     CREATE TABLE IF NOT EXISTS projects (
       id           INTEGER PRIMARY KEY,

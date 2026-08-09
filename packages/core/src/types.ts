@@ -1,4 +1,4 @@
-export type SessionSource = 'claude' | 'codex' | 'gemini' | 'antigravity' | 'opencode'
+export type SessionSource = 'claude' | 'codex' | 'gemini' | 'antigravity' | 'opencode' | 'grok'
 export type Source = SessionSource
 export type SearchMatchType = 'fts' | 'phrase' | 'all_terms'
 
@@ -137,6 +137,7 @@ export interface StatusInfo {
   geminiSessions: number
   antigravitySessions: number
   opencodeSessions: number
+  grokSessions: number
   lastSyncedAt: string | null
   dbSizeBytes: number
 }

@@ -282,6 +282,7 @@ describe('Syncer', () => {
     vi.stubEnv('SPOOL_GEMINI_DIR', join(baseDir, 'missing-gemini'))
     vi.stubEnv('SPOOL_ANTIGRAVITY_DIR', join(baseDir, 'missing-antigravity'))
     vi.stubEnv('SPOOL_OPENCODE_DIR', opencodeDir)
+    vi.stubEnv('SPOOL_GROK_DIR', join(baseDir, 'missing-grok'))
 
     const dbPath = join(opencodeDir, 'opencode.db')
     const openCodeDb = new Database(dbPath)
@@ -338,6 +339,7 @@ describe('Syncer', () => {
     vi.stubEnv('SPOOL_GEMINI_DIR', join(baseDir, 'missing-gemini'))
     vi.stubEnv('SPOOL_ANTIGRAVITY_DIR', join(baseDir, 'missing-antigravity'))
     vi.stubEnv('SPOOL_OPENCODE_DIR', opencodeDir)
+    vi.stubEnv('SPOOL_GROK_DIR', join(baseDir, 'missing-grok'))
 
     const dbPath = join(opencodeDir, 'opencode.db')
     const openCodeDb = new Database(dbPath)

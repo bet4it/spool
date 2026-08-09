@@ -730,7 +730,7 @@ ipcMain.handle('spool:search', (_e, { query, limit = 10, source, onlyPinned, ide
     if (cached) return cached
   }
 
-  const sessionSource = source === 'claude' || source === 'codex' || source === 'gemini' || source === 'antigravity' || source === 'opencode'
+  const sessionSource = source === 'claude' || source === 'codex' || source === 'gemini' || source === 'antigravity' || source === 'opencode' || source === 'grok'
     ? source
     : undefined
   const results = searchFragments(db, query, {
@@ -752,7 +752,7 @@ ipcMain.handle('spool:search-preview', (_e, { query, limit = 5, source }: { quer
   const cached = searchCache.get(cacheKey)
   if (cached) return cached
 
-  const sessionSource = source === 'claude' || source === 'codex' || source === 'gemini' || source === 'antigravity' || source === 'opencode'
+  const sessionSource = source === 'claude' || source === 'codex' || source === 'gemini' || source === 'antigravity' || source === 'opencode' || source === 'grok'
     ? source
     : undefined
   const fragments = searchSessionPreview(db, query, {

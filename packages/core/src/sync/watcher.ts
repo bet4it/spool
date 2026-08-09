@@ -46,7 +46,7 @@ export class SpoolWatcher {
   private pending: Map<string, PendingEntry> = new Map()
   private pendingNew = 0
   private flushTimer: ReturnType<typeof setTimeout> | null = null
-  private sourceRoots: Record<SessionSource, string[]> = { claude: [], codex: [], gemini: [], antigravity: [], opencode: [] }
+  private sourceRoots: Record<SessionSource, string[]> = { claude: [], codex: [], gemini: [], antigravity: [], opencode: [], grok: [] }
   private stopped = false
   private readonly stabilityMs: number
   private readonly pollMs: number
@@ -68,6 +68,7 @@ export class SpoolWatcher {
       gemini: getSessionRoots('gemini'),
       antigravity: getSessionRoots('antigravity'),
       opencode: getSessionRoots('opencode'),
+      grok: getSessionRoots('grok'),
     }
     const roots = [
       ...this.sourceRoots.claude,
@@ -75,6 +76,7 @@ export class SpoolWatcher {
       ...this.sourceRoots.gemini,
       ...this.sourceRoots.antigravity,
       ...this.sourceRoots.opencode,
+      ...this.sourceRoots.grok,
     ]
     for (const root of roots) this.watchRoot(root)
   }
