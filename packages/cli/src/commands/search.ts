@@ -65,6 +65,8 @@ function buildResumeCommand(r: FragmentResult): string | null {
       return `claude -r ${r.sessionUuid}`
     case 'codex':
       return `codex resume ${r.sessionUuid}`
+    case 'grok':
+      return `grok --resume ${r.sessionUuid}`
     default:
       return null
   }

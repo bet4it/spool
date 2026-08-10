@@ -4,6 +4,7 @@ const RESUME_COMMAND_PREFIXES: Record<string, string> = {
   gemini: 'gemini --resume',
   antigravity: 'agy --conversation',
   opencode: 'opencode --session',
+  grok: 'grok --resume',
 }
 
 export function getSessionResumeCommandPrefix(source: string): string | null {

@@ -7,6 +7,8 @@ describe('getSessionResumeCommandPrefix', () => {
     expect(getSessionResumeCommandPrefix('codex')).toBe('codex resume')
     expect(getSessionResumeCommandPrefix('gemini')).toBe('gemini --resume')
     expect(getSessionResumeCommandPrefix('antigravity')).toBe('agy --conversation')
+    expect(getSessionResumeCommandPrefix('opencode')).toBe('opencode --session')
+    expect(getSessionResumeCommandPrefix('grok')).toBe('grok --resume')
   })
 
   it('returns null for unsupported sources', () => {
@@ -20,6 +22,7 @@ describe('getSessionResumeCommand', () => {
     expect(getSessionResumeCommand('codex', '11111111-2222-4333-8444-555555555555')).toBe("codex resume '11111111-2222-4333-8444-555555555555'")
     expect(getSessionResumeCommand('gemini', '99999999-2222-4333-8444-555555555555')).toBe("gemini --resume '99999999-2222-4333-8444-555555555555'")
     expect(getSessionResumeCommand('antigravity', 'conv-uuid-123')).toBe("agy --conversation 'conv-uuid-123'")
+    expect(getSessionResumeCommand('grok', 'aabbccdd-eeff-4455-8899-001122334455')).toBe("grok --resume 'aabbccdd-eeff-4455-8899-001122334455'")
   })
 
   it('escapes embedded single quotes safely', () => {
