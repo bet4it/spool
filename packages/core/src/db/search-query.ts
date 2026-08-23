@@ -98,8 +98,6 @@ function normalizeWhitespace(value: string): string {
 function looksLikeExplicitFtsQuery(query: string): boolean {
   return query.includes('"')
     || query.includes('*')
-    || query.includes('(')
-    || query.includes(')')
     || EXPLICIT_FTS_OPERATOR.test(query)
 }
 

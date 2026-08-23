@@ -24,6 +24,16 @@ describe('buildFtsQuery', () => {
     expect(buildFtsQuery('"查看一下 4242" OR 4242*')).toBe('"查看一下 4242" OR 4242*')
   })
 
+  it('quotes single-token queries with parentheses instead of treating them as FTS5 group operators', () => {
+    // pub(crate) is a common Rust visibility modifier. Bare parentheses
+    // are not valid FTS5 group syntax here, and passing the raw query
+    // through caused "fts5: syntax error near "pub"".
+    expect(buildFtsQuery('pub(crate)')).toBe('"pub(crate)"')
+    expect(buildSearchPlan('pub(crate)')).toEqual([
+      { query: '"pub(crate)"', matchType: 'fts' },
+    ])
+  })
+
   it('builds phrase-first search steps for multi-term input', () => {
     expect(buildSearchPlan('查看一下 4242')).toEqual([
       { query: '"查看一下 4242"', matchType: 'phrase' },
@@ -158,6 +168,15 @@ describe('searchFragments', () => {
     expect(searchFragments(db, '4242', { onlyPinned: true }).map(result => result.sessionUuid)).toEqual([
       'session-review-4242',
     ])
+  })
+
+  it('does not throw on queries with bare parentheses (pub(crate))', () => {
+    const db = createSearchTestDb()
+    // Regression: bare parentheses triggered looksLikeExplicitFtsQuery,
+    // passing the raw query to FTS5 MATCH which rejected it with
+    // "fts5: syntax error near "pub"".
+    expect(() => searchFragments(db, 'pub(crate)', { limit: 10 })).not.toThrow()
+    expect(() => searchFragments(db, 'pub(crate) fn', { limit: 10 })).not.toThrow()
   })
 })
 
