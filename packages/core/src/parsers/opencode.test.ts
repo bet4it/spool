@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  OPENCODE_INDEX_VERSION,
   getOpenCodeSessionIndexedMtime,
   listOpenCodeSessionFilePaths,
   loadOpenCodeSession,
@@ -78,7 +79,7 @@ describe('OpenCode parser', () => {
       makeOpenCodeSessionFilePath(dbPath, 'ses_abc123'),
     ])
     expect(getOpenCodeSessionIndexedMtime(makeOpenCodeSessionFilePath(dbPath, 'ses_abc123')))
-      .toBe('1779152404000::opencode-v3-session-model-json')
+      .toBe(`1779152404000::${OPENCODE_INDEX_VERSION}`)
   })
 
   it('folds OpenCode child sessions into the parent as sidechain messages', () => {
@@ -94,7 +95,7 @@ describe('OpenCode parser', () => {
       makeOpenCodeSessionFilePath(dbPath, 'ses_abc123'),
     ])
     expect(getOpenCodeSessionIndexedMtime(makeOpenCodeSessionFilePath(dbPath, 'ses_abc123')))
-      .toBe('1779152410000::opencode-v3-session-model-json')
+      .toBe(`1779152410000::${OPENCODE_INDEX_VERSION}`)
 
     const childPath = makeOpenCodeSessionFilePath(dbPath, 'ses_child_explore')
     expect(loadOpenCodeSession(childPath)).toEqual({ kind: 'filtered' })

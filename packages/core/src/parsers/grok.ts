@@ -3,9 +3,10 @@ import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
-import type { ParseSessionResult, ParsedSession, ParsedMessage } from '../types.js'
+import type { ParseSessionResult, ParsedSession, ParsedMessage, ToolCall as ParsedToolCall } from '../types.js'
+import { limitToolCalls, makeToolCall } from './tool-calls.js'
 
-export const GROK_INDEX_VERSION = 'grok-v1-chat-history-jsonl'
+export const GROK_INDEX_VERSION = 'grok-v3-workspace-result-strip'
 
 // ── On-disk types ───────────────────────────────────────────────────────────
 // These mirror the ConversationItem enum in grok-build's
@@ -82,6 +83,9 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
 
   // ── Parse chat_history.jsonl ─────────────────────────────────────────
   const messages: ParsedMessage[] = []
+  // tool_call_id → the ToolCall already attached to an assistant
+  // message, so a later `tool_result` item can fill in its output.
+  const pendingToolCalls = new Map<string, ParsedToolCall>()
 
   for (const line of readNonEmptyLines(filePath)) {
     let item: ChatHistoryItem
@@ -123,8 +127,16 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
       const toolNames = (item.tool_calls ?? [])
         .map(tc => tc.name)
         .filter((name): name is string => typeof name === 'string' && name.length > 0)
+      const toolCalls = limitToolCalls((item.tool_calls ?? [])
+        .filter(tc => typeof tc.name === 'string' && tc.name.length > 0)
+        .map(tc => makeToolCall({ name: tc.name, id: tc.id, input: tc.arguments })))
 
       if (text || toolNames.length > 0) {
+        // Results arrive as later `tool_result` items keyed by
+        // tool_call_id; register the calls so they can be filled in.
+        for (const call of toolCalls) {
+          if (call.id) pendingToolCalls.set(call.id, call)
+        }
         messages.push({
           uuid: `grok-${sessionUuid}-a-${messages.length}`,
           parentUuid: null,
@@ -134,6 +146,7 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
           isSidechain: false,
           toolNames,
           seq: messages.length,
+          ...(toolCalls.length > 0 ? { toolCalls } : {}),
         })
       }
       continue
@@ -143,7 +156,21 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
       // Index tool results as sidechain messages for FTS richness, matching
       // how the codex parser treats response_items. Keeps the main
       // conversation list clean while making tool output searchable.
-      const text = (typeof item.content === 'string' ? item.content : '').trim()
+      const rawText = (typeof item.content === 'string' ? item.content : '').trim()
+      // Strip Grok's <workspace_result workspace_path="..."> wrapper so
+      // the indexed/displayed text is just the tool output, not the
+      // surrounding tag. The workspace_path is already known from the
+      // session cwd.
+      const text = stripWorkspaceResultWrapper(rawText)
+      // Fold the payload into the assistant message's call detail, in
+      // addition to the sidechain row kept below for FTS.
+      const pending = item.tool_call_id ? pendingToolCalls.get(item.tool_call_id) : undefined
+      if (pending && text) {
+        const filled = makeToolCall({ name: pending.name, result: text })
+        if (filled.result) pending.result = filled.result
+        if (filled.resultTruncated) pending.resultTruncated = true
+        pendingToolCalls.delete(item.tool_call_id!)
+      }
       if (text) {
         messages.push({
           uuid: `grok-${sessionUuid}-t-${messages.length}`,
@@ -241,6 +268,25 @@ function stripGrokWrapperTags(text: string): string {
     result = result.replace(re, '')
   }
   return result.trim()
+}
+
+/**
+ * Strip Grok's `<workspace_result workspace_path="…">…</workspace_result>`
+ * wrapper from tool result text, leaving just the output content.
+ *
+ * Grok wraps tool output (grep, list_dir, etc.) in this tag. The
+ * `workspace_path` attribute duplicates the session cwd and adds no
+ * value in the detail view.
+ */
+function stripWorkspaceResultWrapper(text: string): string {
+  if (!text) return ''
+  const match = text.match(
+    /<workspace_result[^>]*>\s*([\s\S]*?)<\/workspace_result>/,
+  )
+  if (match) {
+    return match[1]!.trim()
+  }
+  return text
 }
 
 export function parseGrokSession(filePath: string): ParsedSession | null {

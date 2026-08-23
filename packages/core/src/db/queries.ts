@@ -1,7 +1,27 @@
 import type Database from 'better-sqlite3'
-import type { Session, Message, FragmentResult, StatusInfo, SearchMatchType, SessionSource, ProjectIdentityKind } from '../types.js'
+import type { Session, Message, FragmentResult, StatusInfo, SearchMatchType, SessionSource, ProjectIdentityKind, ToolCall } from '../types.js'
 import { DB_PATH, getDBSize } from './db.js'
 import { buildPreviewFtsPlan, buildSearchPlan, canUseSessionSearchFts, containsCjk, getNaturalSearchPhrase, getNaturalSearchTerms, selectFtsTableKind, shouldUseSessionFallback } from './search-query.js'
+
+/**
+ * Decode the `tool_calls` column.
+ *
+ * Tolerant by construction: the column is NOT NULL DEFAULT '[]' at
+ * head, but DBs that predate v16 (and hand-seeded test fixtures) can
+ * still surface NULL or a non-array value here. A transcript must
+ * keep rendering when its tool detail is unreadable, so anything
+ * unexpected degrades to "no detail" instead of throwing through
+ * getSessionWithMessages.
+ */
+function parseToolCalls(raw: unknown): ToolCall[] {
+  if (typeof raw !== 'string' || raw.length === 0) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as ToolCall[]) : []
+  } catch {
+    return []
+  }
+}
 
 export function getOrCreateProject(
   db: Database.Database,
@@ -282,13 +302,16 @@ export function insertMessages(
     isSidechain: boolean
     toolNames: string[]
     seq: number
+    toolCalls?: ToolCall[]
+    thinking?: string
   }>,
 ): number {
   const stmt = db.prepare(`
     INSERT INTO messages
       (session_id, source_id, msg_uuid, parent_uuid, role,
-       content_text, timestamp, is_sidechain, tool_names, seq)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       content_text, timestamp, is_sidechain, tool_names, tool_calls,
+       thinking, seq)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id, msg_uuid) WHERE msg_uuid IS NOT NULL DO NOTHING
   `)
 
@@ -297,7 +320,10 @@ export function insertMessages(
     const info = stmt.run(
       sessionId, sourceId, m.uuid, m.parentUuid, m.role,
       m.contentText, m.timestamp, m.isSidechain ? 1 : 0,
-      JSON.stringify(m.toolNames), m.seq,
+      JSON.stringify(m.toolNames),
+      JSON.stringify(m.toolCalls ?? []),
+      m.thinking ?? null,
+      m.seq,
     )
     if (info.changes > 0) inserted++
   }
@@ -397,7 +423,8 @@ export function getSessionWithMessages(
   const msgRows = db.prepare(`
     SELECT id, session_id AS sessionId, msg_uuid AS msgUuid,
            parent_uuid AS parentUuid, role, content_text AS contentText,
-           timestamp, is_sidechain AS isSidechain, tool_names AS toolNames, seq
+           timestamp, is_sidechain AS isSidechain, tool_names AS toolNames,
+           tool_calls AS toolCalls, thinking, seq
     FROM messages
     WHERE session_id = ?
       AND (is_sidechain = 0 OR parent_uuid LIKE 'opencode-subagent:%')
@@ -414,6 +441,8 @@ export function getSessionWithMessages(
     timestamp: r['timestamp'] as string,
     isSidechain: Boolean(r['isSidechain']),
     toolNames: JSON.parse(r['toolNames'] as string) as string[],
+    toolCalls: parseToolCalls(r['toolCalls']),
+    thinking: (r['thinking'] as string | null) ?? null,
     seq: r['seq'] as number,
   }))
 

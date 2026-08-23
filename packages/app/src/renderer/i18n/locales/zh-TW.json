@@ -128,7 +128,12 @@
     "refreshConfirmDismissNote": "已忽略的發現會保持忽略狀態。",
     "refreshConfirmAction": "重新同步",
     "refreshSuccess": "會話已從原始檔重新同步",
-    "refreshError": "重新同步失敗：{{error}}"
+    "refreshError": "重新同步失敗：{{error}}",
+    "thinking": "思考過程",
+    "toolInput": "輸入",
+    "toolResult": "結果",
+    "toolFailed": "失敗",
+    "toolTruncated": "內容過長，已截斷顯示"
   },
   "library": {
     "greeting": "歡迎回來",

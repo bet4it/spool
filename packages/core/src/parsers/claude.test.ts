@@ -3,6 +3,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parseClaudeSession } from './claude.js'
+import { TOOL_RESULT_LIMIT } from './tool-calls.js'
 
 function writeTmpSession(lines: Record<string, unknown>[]): string {
   const dir = mkdtempSync(join(tmpdir(), 'spool-test-'))
@@ -106,5 +107,125 @@ describe('parseClaudeSession', () => {
     ])
     const result = parseClaudeSession(fp)
     expect(result?.title).toBe('what did I do today?')
+  })
+
+  describe('tool calls and thinking', () => {
+    it('captures tool_use input and pairs the tool_result from the following user record', () => {
+      // Claude splits one invocation across two records: the assistant's
+      // tool_use, then a user record carrying the matching tool_result.
+      // The result must land on the assistant message that made the call.
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'list the files' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls', description: 'List files' } },
+        ] } }),
+        baseRecord({ type: 'user', uuid: 'u2', message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: 'a.txt\nb.txt' },
+        ] } }),
+      ])
+      const result = parseClaudeSession(fp)
+      const assistant = result?.messages.find(m => m.uuid === 'a1')
+      expect(assistant?.toolNames).toEqual(['Bash'])
+      expect(assistant?.toolCalls).toHaveLength(1)
+      expect(assistant?.toolCalls?.[0]?.name).toBe('Bash')
+      expect(assistant?.toolCalls?.[0]?.input).toContain('"command": "ls"')
+      expect(assistant?.toolCalls?.[0]?.result).toBe('a.txt\nb.txt')
+      expect(assistant?.toolCalls?.[0]?.isError).toBeUndefined()
+    })
+
+    it('marks a failed tool_result with isError', () => {
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'run it' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'nope' } },
+        ] } }),
+        baseRecord({ type: 'user', uuid: 'u2', message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: 'command not found', is_error: true },
+        ] } }),
+      ])
+      const call = parseClaudeSession(fp)?.messages.find(m => m.uuid === 'a1')?.toolCalls?.[0]
+      expect(call?.isError).toBe(true)
+      expect(call?.result).toBe('command not found')
+    })
+
+    it('captures plaintext thinking and drops encrypted (empty) thinking blocks', () => {
+      // Extended-thinking turns emit a thinking block whose text is empty
+      // when the content is server-side encrypted — only `signature` is
+      // present. Those must not produce an empty disclosure in the UI.
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'think about it' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Let me consider the options.' },
+          { type: 'text', text: 'Here is my answer.' },
+        ] } }),
+        baseRecord({ type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [
+          { type: 'thinking', thinking: '', signature: 'CAIShQMK' },
+          { type: 'text', text: 'Second answer.' },
+        ] } }),
+      ])
+      const messages = parseClaudeSession(fp)?.messages ?? []
+      expect(messages.find(m => m.uuid === 'a1')?.thinking).toBe('Let me consider the options.')
+      expect(messages.find(m => m.uuid === 'a2')?.thinking).toBeUndefined()
+    })
+
+    it('keeps a thinking-only turn that would otherwise be dropped as empty', () => {
+      // Pre-existing behaviour skips messages with no text and no tools.
+      // A turn carrying only reasoning still has something to show.
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'hello' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Reasoning with no visible reply.' },
+        ] } }),
+      ])
+      const assistant = parseClaudeSession(fp)?.messages.find(m => m.uuid === 'a1')
+      expect(assistant?.thinking).toBe('Reasoning with no visible reply.')
+      expect(assistant?.contentText).toBe('')
+    })
+
+    it('does not strip XML-ish markup from tool result payloads', () => {
+      // contentText runs through tag-stripping to keep the FTS index
+      // clean. Tool output must bypass that — a Read of an HTML file
+      // has to survive verbatim in the detail view.
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'read it' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/tmp/x.html' } },
+        ] } }),
+        baseRecord({ type: 'user', uuid: 'u2', message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'text', text: '<div>hi</div>' }] },
+        ] } }),
+      ])
+      const call = parseClaudeSession(fp)?.messages.find(m => m.uuid === 'a1')?.toolCalls?.[0]
+      expect(call?.result).toBe('<div>hi</div>')
+    })
+
+    it('clamps oversized tool results and flags the truncation', () => {
+      // Tool output is unbounded (cat a log, read a large file). The
+      // clamp is what keeps spool.db from ballooning for a detail view
+      // that is collapsed by default.
+      const huge = 'x'.repeat(TOOL_RESULT_LIMIT + 500)
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'cat it' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'cat big.log' } },
+        ] } }),
+        baseRecord({ type: 'user', uuid: 'u2', message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: huge },
+        ] } }),
+      ])
+      const call = parseClaudeSession(fp)?.messages.find(m => m.uuid === 'a1')?.toolCalls?.[0]
+      expect(call?.result).toHaveLength(TOOL_RESULT_LIMIT)
+      expect(call?.resultTruncated).toBe(true)
+    })
+
+    it('leaves toolCalls undefined for ordinary text turns', () => {
+      const fp = writeTmpSession([
+        baseRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'hi' } }),
+        baseRecord({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: 'hello' } }),
+      ])
+      const assistant = parseClaudeSession(fp)?.messages.find(m => m.uuid === 'a1')
+      expect(assistant?.toolCalls).toBeUndefined()
+      expect(assistant?.thinking).toBeUndefined()
+    })
   })
 })

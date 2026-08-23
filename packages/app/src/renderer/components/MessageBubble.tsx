@@ -1,6 +1,8 @@
 import { memo } from 'react'
 import type { Message } from '@spool-lab/core'
 import MarkdownContent from './MarkdownContent.js'
+import ToolCallList from './session/ToolCallList.js'
+import ThinkingBlock from './session/ThinkingBlock.js'
 import type { Range as FindRange } from '../markdown/findHighlightPlugin.js'
 
 export type { FindRange }
@@ -15,6 +17,21 @@ interface Props {
   onActiveMatchRef?: ((node: HTMLElement | null) => void) | undefined
 }
 
+/** Name-only chips for rows with no structured detail — sessions
+ *  indexed before the schema captured tool payloads, and providers
+ *  that record nothing beyond a name. */
+function ToolNameChips({ names }: { names: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-1 mb-1">
+      {names.map((name) => (
+        <span key={name} className="text-[10px] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-500 px-1.5 py-0.5 rounded">
+          {name}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function MessageBubble({
   message,
   isDark,
@@ -26,7 +43,13 @@ function MessageBubble({
 }: Props) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
-  const isToolUseOnly = message.toolNames.length > 0 && !message.contentText
+  const toolCalls = message.toolCalls ?? []
+  const thinking = message.thinking ?? ''
+  // Detail rows replace the bare chips only when there is something to
+  // reveal; otherwise the chips remain the honest rendering.
+  const hasToolDetail = toolCalls.length > 0
+  const isToolUseOnly =
+    message.toolNames.length > 0 && !message.contentText && !thinking && !hasToolDetail
   const contentText = message.contentText || (isSystem ? '(summary)' : '')
 
   const markdownProps = {
@@ -85,16 +108,14 @@ function MessageBubble({
           <div className="flex-none w-5 h-5 mt-0.5" aria-hidden />
         )}
         <div className="flex-1 min-w-0">
-          {message.toolNames.length > 0 && (
-            <div className="flex flex-wrap gap-1 mb-1">
-              {message.toolNames.map((name) => (
-                <span key={name} className="text-[10px] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-500 px-1.5 py-0.5 rounded">
-                  {name}
-                </span>
-              ))}
-            </div>
-          )}
-          <MarkdownContent {...markdownProps} />
+          {/* Reasoning precedes the reply it produced, and the tool
+              rows follow it, so the row order matches the order the
+              turn actually happened in. */}
+          {thinking && <ThinkingBlock text={thinking} />}
+          {hasToolDetail
+            ? <ToolCallList calls={toolCalls} />
+            : message.toolNames.length > 0 && <ToolNameChips names={message.toolNames} />}
+          {contentText && <MarkdownContent {...markdownProps} />}
           <p className="text-[10px] text-neutral-400 mt-1">{formatTime(message.timestamp)}</p>
         </div>
       </div>

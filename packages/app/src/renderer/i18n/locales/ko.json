@@ -128,7 +128,12 @@
     "refreshConfirmDismissNote": "무시한 발견은 무시 상태로 유지됩니다.",
     "refreshConfirmAction": "다시 동기화",
     "refreshSuccess": "세션을 원본에서 다시 동기화했습니다",
-    "refreshError": "다시 동기화 실패: {{error}}"
+    "refreshError": "다시 동기화 실패: {{error}}",
+    "thinking": "사고 과정",
+    "toolInput": "입력",
+    "toolResult": "결과",
+    "toolFailed": "실패",
+    "toolTruncated": "표시를 위해 잘렸습니다"
   },
   "library": {
     "greeting": "환영합니다",

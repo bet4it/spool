@@ -1,8 +1,9 @@
 import { closeSync, openSync, readSync } from 'node:fs'
 import { basename } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
-import type { ParseSessionResult, ParsedSession, ParsedMessage } from '../types.js'
+import type { ParseSessionResult, ParsedSession, ParsedMessage, ToolCall } from '../types.js'
 import { stripSpoolSystemPrelude } from './spool-prelude.js'
+import { limitToolCalls, makeToolCall, normalizeThinking, expandCodexExec } from './tool-calls.js'
 
 interface CodexRecord {
   timestamp: string
@@ -10,7 +11,7 @@ interface CodexRecord {
   payload?: Record<string, unknown>
 }
 
-export const CODEX_INDEX_VERSION = 'codex-v5-filter-internal-assessment-and-approval-session-search-fts'
+export const CODEX_INDEX_VERSION = 'codex-v9-truncated-exec'
 
 const READ_CHUNK_SIZE = 1024 * 1024
 
@@ -34,6 +35,16 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
   let cwd = ''
   let model = ''
   let isInternalAssessmentSession = false
+
+  // Codex records a turn as a flat run of sibling records rather than a
+  // nested message: reasoning events, then function_call / output pairs,
+  // then the assistant's `agent_message`. Buffer the tool and reasoning
+  // detail as it streams past and flush it onto the assistant message
+  // that closes the turn, so the UI shows "the model thought X, ran Y,
+  // then said Z" as one unit.
+  let pendingToolCalls: ToolCall[] = []
+  let pendingThinking: string[] = []
+  const callsById = new Map<string, ToolCall>()
 
   // Extract UUID from filename: rollout-2026-03-23T17-13-24-{uuid}.jsonl
   //
@@ -100,6 +111,8 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
           continue
         }
         if (text) {
+          const toolCalls = limitToolCalls(pendingToolCalls.flatMap(expandCodexExec))
+          const thinking = normalizeThinking(pendingThinking.join('\n\n'))
           eventMessages.push({
             uuid: `codex-${sessionUuid}-a-${eventMessages.length}`,
             parentUuid: null,
@@ -107,15 +120,57 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
             contentText: text,
             timestamp,
             isSidechain: false,
-            toolNames: [],
+            toolNames: toolCalls.map(call => call.name),
             seq: eventMessages.length,
+            ...(toolCalls.length > 0 ? { toolCalls } : {}),
+            ...(thinking ? { thinking } : {}),
           })
+          pendingToolCalls = []
+          pendingThinking = []
+          callsById.clear()
         }
+      } else if (msgType === 'agent_reasoning' && payload['text']) {
+        // The plaintext summary of a reasoning block. The parallel
+        // `response_item`/`reasoning` record carries the same content
+        // encrypted, so this event is the only readable source.
+        const text = String(payload['text']).trim()
+        if (text) pendingThinking.push(text)
       }
       continue
     }
 
     if (type === 'response_item' && payload) {
+      const itemType = payload['type'] as string | undefined
+
+      // Two call flavours: `function_call` (JSON `arguments`) and
+      // `custom_tool_call` (freeform `input`, used by apply_patch).
+      if (itemType === 'function_call' || itemType === 'custom_tool_call') {
+        const name = payload['name'] as string | undefined
+        if (name) {
+          const callId = payload['call_id'] as string | undefined
+          const call = makeToolCall({
+            name,
+            id: callId,
+            input: itemType === 'function_call' ? payload['arguments'] : payload['input'],
+          })
+          pendingToolCalls.push(call)
+          if (callId) callsById.set(callId, call)
+        }
+        continue
+      }
+
+      if (itemType === 'function_call_output' || itemType === 'custom_tool_call_output') {
+        const callId = payload['call_id'] as string | undefined
+        const call = callId ? callsById.get(callId) : undefined
+        if (call) {
+          const filled = makeToolCall({ name: call.name, result: payload['output'] })
+          if (filled.result) call.result = filled.result
+          if (filled.resultTruncated) call.resultTruncated = true
+          if (callId) callsById.delete(callId)
+        }
+        continue
+      }
+
       const role = payload['role'] as string | undefined
       if (role === 'assistant') {
         const content = payload['content']
@@ -145,6 +200,30 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
       }
       continue
     }
+  }
+
+  // A session that ends on tool work — interrupted, or a turn whose
+  // last action was a command with no closing prose — leaves buffered
+  // detail with no assistant message to attach to. Emit it as a
+  // trailing tool-only message so that work is still visible; without
+  // this the final commands of every aborted session vanish.
+  if (pendingToolCalls.length > 0 || pendingThinking.length > 0) {
+    const toolCalls = limitToolCalls(pendingToolCalls.flatMap(expandCodexExec))
+    const thinking = normalizeThinking(pendingThinking.join('\n\n'))
+    const lastTimestamp = eventMessages[eventMessages.length - 1]?.timestamp
+      ?? new Date().toISOString()
+    eventMessages.push({
+      uuid: `codex-${sessionUuid}-a-${eventMessages.length}`,
+      parentUuid: null,
+      role: 'assistant',
+      contentText: '',
+      timestamp: lastTimestamp,
+      isSidechain: false,
+      toolNames: toolCalls.map(call => call.name),
+      seq: eventMessages.length,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(thinking ? { thinking } : {}),
+    })
   }
 
   // Strategy: use event_msg for UI (concise); supplement with response_items for

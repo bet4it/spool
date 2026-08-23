@@ -132,7 +132,12 @@
     "refreshConfirmDismissNote": "Les détections ignorées restent ignorées.",
     "refreshConfirmAction": "Actualiser",
     "refreshSuccess": "Session actualisée depuis la source",
-    "refreshError": "Impossible d'actualiser : {{error}}"
+    "refreshError": "Impossible d'actualiser : {{error}}",
+    "thinking": "Raisonnement",
+    "toolInput": "Entrée",
+    "toolResult": "Résultat",
+    "toolFailed": "échec",
+    "toolTruncated": "Tronqué pour l’affichage"
   },
   "library": {
     "greeting": "Bon retour",

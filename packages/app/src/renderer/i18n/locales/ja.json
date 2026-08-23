@@ -128,7 +128,12 @@
     "refreshConfirmDismissNote": "無視した検出は無視のままです。",
     "refreshConfirmAction": "再同期",
     "refreshSuccess": "セッションをソースから再同期しました",
-    "refreshError": "再同期に失敗しました：{{error}}"
+    "refreshError": "再同期に失敗しました：{{error}}",
+    "thinking": "思考プロセス",
+    "toolInput": "入力",
+    "toolResult": "結果",
+    "toolFailed": "失敗",
+    "toolTruncated": "表示のため省略されました"
   },
   "library": {
     "greeting": "おかえりなさい",

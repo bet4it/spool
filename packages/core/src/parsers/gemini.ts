@@ -1,12 +1,17 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { ParseSessionResult, ParsedMessage, ParsedSession } from '../types.js'
+import type { ParseSessionResult, ParsedMessage, ParsedSession, ToolCall } from '../types.js'
+import { limitToolCalls, makeToolCall } from './tool-calls.js'
 import { stripSpoolSystemPrelude } from './spool-prelude.js'
 
 interface GeminiToolCall {
   name?: string
   displayName?: string
+  args?: unknown
+  /** Gemini nests the payload as
+   *  `result[].functionResponse.response.output`. */
+  result?: unknown
 }
 
 interface GeminiMessageRecord {
@@ -127,6 +132,7 @@ export function loadGeminiSession(filePath: string): ParseSessionResult {
     const rawText = extractText(message.content)
     const contentText = type === 'user' ? stripSessionContext(rawText) : rawText
     const toolNames = extractToolNames(message.toolCalls)
+    const toolCalls = extractToolCalls(message.toolCalls)
     if (!contentText && toolNames.length === 0) continue
 
     if (type === 'gemini' && message.model) model = message.model
@@ -140,6 +146,7 @@ export function loadGeminiSession(filePath: string): ParseSessionResult {
       isSidechain: false,
       toolNames,
       seq: messages.length,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
     })
   }
 
@@ -227,6 +234,51 @@ function extractToolNames(toolCalls: unknown): string[] {
       return record.displayName ?? record.name
     })
     .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+}
+
+/** Structured counterpart to extractToolNames.
+ *
+ *  Gemini has no reasoning field in its transcripts, so only tool
+ *  detail is recovered here. */
+function extractToolCalls(toolCalls: unknown): ToolCall[] {
+  if (!Array.isArray(toolCalls)) return []
+
+  const calls = toolCalls
+    .filter((toolCall): toolCall is GeminiToolCall =>
+      Boolean(toolCall) && typeof toolCall === 'object')
+    .map(record => {
+      const name = record.displayName ?? record.name
+      if (typeof name !== 'string' || name.trim().length === 0) return undefined
+      return makeToolCall({
+        name,
+        input: record.args,
+        result: extractToolCallOutput(record.result),
+      })
+    })
+    .filter((call): call is ToolCall => call !== undefined)
+
+  return limitToolCalls(calls)
+}
+
+/** Pull the human-readable text out of Gemini's functionResponse
+ *  wrapper, falling back to the whole value when the shape differs
+ *  (the wrapper has changed across gemini-cli versions). */
+function extractToolCallOutput(result: unknown): unknown {
+  if (!Array.isArray(result)) return result
+  const outputs = result
+    .map(entry => {
+      if (!entry || typeof entry !== 'object') return undefined
+      const response = (entry as { functionResponse?: { response?: unknown } })
+        .functionResponse?.response
+      if (!response || typeof response !== 'object') return response
+      const output = (response as { output?: unknown }).output
+      return output ?? response
+    })
+    .filter(value => value !== undefined && value !== null)
+
+  if (outputs.length === 0) return undefined
+  if (outputs.length === 1) return outputs[0]
+  return outputs
 }
 
 function resolveGeminiProjectRoot(filePath: string): string {

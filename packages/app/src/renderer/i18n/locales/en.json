@@ -132,7 +132,12 @@
     "refreshConfirmDismissNote": "Dismissed findings stay dismissed.",
     "refreshConfirmAction": "Refresh",
     "refreshSuccess": "Session refreshed from source",
-    "refreshError": "Couldn't refresh: {{error}}"
+    "refreshError": "Couldn't refresh: {{error}}",
+    "thinking": "Thinking",
+    "toolInput": "Input",
+    "toolResult": "Result",
+    "toolFailed": "failed",
+    "toolTruncated": "Truncated for display"
   },
   "library": {
     "greeting": "Welcome back",

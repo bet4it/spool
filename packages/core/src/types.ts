@@ -2,6 +2,30 @@ export type SessionSource = 'claude' | 'codex' | 'gemini' | 'antigravity' | 'ope
 export type Source = SessionSource
 export type SearchMatchType = 'fts' | 'phrase' | 'all_terms'
 
+/**
+ * One tool invocation captured from a transcript.
+ *
+ * `name` is the only guaranteed field — every provider records it, and
+ * pre-existing rows indexed before tool detail was captured have
+ * nothing else. The payload fields are clamped at parse time (see
+ * parsers/tool-calls.ts); `inputTruncated` / `resultTruncated` mark
+ * where that happened so the detail view can label the cut instead of
+ * presenting a truncated payload as complete.
+ */
+export interface ToolCall {
+  name: string
+  /** Provider call id, used to pair a call with its result across
+   *  messages (Claude/Codex split them). Absent when the provider
+   *  stores the call and its output together (OpenCode). */
+  id?: string
+  input?: string
+  result?: string
+  inputTruncated?: boolean
+  resultTruncated?: boolean
+  /** True when the provider flagged the result as a failure. */
+  isError?: boolean
+}
+
 export interface ParsedMessage {
   uuid: string
   parentUuid: string | null
@@ -11,6 +35,14 @@ export interface ParsedMessage {
   isSidechain: boolean
   toolNames: string[]
   seq: number
+  /** Structured detail behind `toolNames`. Same order as `toolNames`
+   *  when the provider gives us both; omitted entirely when the
+   *  provider exposes no detail. */
+  toolCalls?: ToolCall[]
+  /** Model reasoning/thinking text for this turn, when the provider
+   *  records it in plaintext. Claude and Codex both also emit
+   *  encrypted/empty reasoning blocks, which parsers drop. */
+  thinking?: string
 }
 
 export interface ParsedSession {
@@ -109,6 +141,11 @@ export interface Message {
   isSidechain: boolean
   toolNames: string[]
   seq: number
+  /** See ParsedMessage.toolCalls. Empty for rows indexed before the
+   *  schema carried tool detail — the UI falls back to the name-only
+   *  chip rendering for those. */
+  toolCalls: ToolCall[]
+  thinking: string | null
 }
 
 export interface FragmentResult {

@@ -202,4 +202,139 @@ describe('parseAntigravitySession', () => {
     const result = parseAntigravitySession(filePath)
     expect(result).toBeNull() // parseAntigravitySession returns null for skipped results
   })
+
+  it('pairs tool result records with PLANNER_RESPONSE tool calls', () => {
+    const cliRoot = makeAntigravityHome()
+    const convId = '11111111-2222-4333-8444-555555555555'
+    writeHistoryJsonl(cliRoot, convId)
+    const logsDir = join(cliRoot, 'brain', convId, '.system_generated', 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    vi.stubEnv('ANTIGRAVITY_CLI_HOME', cliRoot)
+
+    const filePath = join(logsDir, 'transcript.jsonl')
+    writeFileSync(filePath, makeTranscript([
+      {
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:00Z',
+        content: '<USER_REQUEST>\nSearch for foo\n</USER_REQUEST>',
+      },
+      {
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:10Z',
+        content: 'Let me search.',
+        tool_calls: [
+          { name: 'grep_search', args: { Query: '"foo"', SearchPath: '/tmp' } },
+          { name: 'list_dir', args: { DirectoryPath: '/tmp' } },
+        ],
+      },
+      {
+        step_index: 2,
+        source: 'MODEL',
+        type: 'GREP_SEARCH',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:11Z',
+        content: 'Created At: 2026-06-01T00:00:11Z\nCompleted At: 2026-06-01T00:00:11Z\nsrc/main.ts:42:const foo = 1',
+      },
+      {
+        step_index: 3,
+        source: 'MODEL',
+        type: 'LIST_DIRECTORY',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:12Z',
+        content: 'Created At: 2026-06-01T00:00:12Z\nCompleted At: 2026-06-01T00:00:12Z\n{"name":"main.ts","sizeBytes":"100"}',
+      },
+    ]))
+
+    const parsed = parseAntigravitySession(filePath)
+    expect(parsed?.messages).toHaveLength(2)
+    const assistant = parsed!.messages[1]!
+    expect(assistant.toolNames).toEqual(['grep_search', 'list_dir'])
+    expect(assistant.toolCalls).toHaveLength(2)
+    // grep_search result should be cleaned of metadata
+    expect(assistant.toolCalls![0]!.result).toBe('src/main.ts:42:const foo = 1')
+    // list_dir result should also be cleaned
+    expect(assistant.toolCalls![1]!.result).toContain('main.ts')
+  })
+
+  it('pairs ask_question with ASK_QUESTION result and unwraps double-encoded args', () => {
+    const cliRoot = makeAntigravityHome()
+    const convId = '22222222-3333-4444-8555-666666666666'
+    writeHistoryJsonl(cliRoot, convId)
+    const logsDir = join(cliRoot, 'brain', convId, '.system_generated', 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    vi.stubEnv('ANTIGRAVITY_CLI_HOME', cliRoot)
+
+    const filePath = join(logsDir, 'transcript.jsonl')
+    writeFileSync(filePath, makeTranscript([
+      {
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:00Z',
+        content: '<USER_REQUEST>\nShould I use cargoLock?\n</USER_REQUEST>',
+      },
+      {
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:10Z',
+        content: 'I will ask the user for their preference.',
+        tool_calls: [
+          {
+            name: 'ask_question',
+            args: {
+              questions: JSON.stringify([
+                {
+                  is_multi_select: false,
+                  question: 'How would you prefer to handle the dependencies?',
+                  options: [
+                    '(Recommended) Option 1: Use cargoLock',
+                    'Option 2: Use importPnpmLock',
+                  ],
+                },
+              ]),
+              toolAction: JSON.stringify('Asking user for preference'),
+              toolSummary: JSON.stringify('Ask user for dependency preference'),
+            },
+          },
+        ],
+      },
+      {
+        step_index: 2,
+        source: 'MODEL',
+        type: 'ASK_QUESTION',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:11Z',
+        content: 'Created At: 2026-06-01T00:00:11Z\nCompleted At: 2026-06-01T00:00:12Z\nA1: (Recommended) Option 1: Use cargoLock',
+      },
+    ]))
+
+    const parsed = parseAntigravitySession(filePath)
+    expect(parsed?.messages).toHaveLength(2)
+    const assistant = parsed!.messages[1]!
+    expect(assistant.toolNames).toEqual(['ask_question'])
+    expect(assistant.toolCalls).toHaveLength(1)
+
+    const tc = assistant.toolCalls![0]!
+    // The double-encoded `questions` string should be unwrapped into a real array
+    const input = JSON.parse(tc.input!) as { questions: unknown[] }
+    expect(Array.isArray(input.questions)).toBe(true)
+    expect(input.questions).toHaveLength(1)
+    const q = input.questions[0] as { question: string; options: string[] }
+    expect(q.question).toBe('How would you prefer to handle the dependencies?')
+    expect(q.options[0]).toBe('(Recommended) Option 1: Use cargoLock')
+
+    // Result should be paired from the ASK_QUESTION record, metadata stripped
+    expect(tc.result).toContain('A1: (Recommended) Option 1: Use cargoLock')
+    expect(tc.result).not.toContain('Created At:')
+    expect(tc.result).not.toContain('Completed At:')
+  })
 })

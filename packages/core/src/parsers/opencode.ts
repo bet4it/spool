@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3'
 import { basename, dirname, join } from 'node:path'
-import type { ParseSessionResult, ParsedMessage, ParsedSession } from '../types.js'
+import type { ParseSessionResult, ParsedMessage, ParsedSession, ToolCall } from '../types.js'
 import { stripSpoolSystemPrelude } from './spool-prelude.js'
+import { limitToolCalls, makeToolCall, normalizeThinking } from './tool-calls.js'
 
-export const OPENCODE_INDEX_VERSION = 'opencode-v3-session-model-json'
+export const OPENCODE_INDEX_VERSION = 'opencode-v4-tool-calls-and-reasoning'
 export const OPENCODE_DB_NAME = 'opencode.db'
 const OPENCODE_SESSION_SEPARATOR = '#session='
 const OPENCODE_SUBAGENT_PARENT_PREFIX = 'opencode-subagent:'
@@ -62,6 +63,14 @@ interface OpenCodePartData {
   text?: string
   tool?: string
   synthetic?: boolean
+  /** Unlike Claude/Codex, OpenCode keeps a call and its result together
+   *  under one part, so no cross-message pairing is needed. */
+  state?: {
+    status?: string
+    input?: unknown
+    output?: unknown
+    error?: unknown
+  }
 }
 
 export function makeOpenCodeSessionFilePath(dbPath: string, sessionId: string): string {
@@ -328,7 +337,9 @@ function loadMessagesForOpenCodeSession(
 
     const contentText = extractText(parts)
     const toolNames = extractToolNames(parts)
-    if (!contentText && toolNames.length === 0) continue
+    const toolCalls = extractToolCalls(parts)
+    const thinking = extractThinking(parts)
+    if (!contentText && toolNames.length === 0 && !thinking) continue
 
     messages.push({
       uuid: `${opts.uuidPrefix ?? ''}${messageRow.id}`,
@@ -339,6 +350,8 @@ function loadMessagesForOpenCodeSession(
       isSidechain: opts.sidechain,
       toolNames,
       seq: messages.length,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(thinking ? { thinking } : {}),
     })
   }
 
@@ -380,6 +393,38 @@ function extractToolNames(parts: OpenCodePartData[]): string[] {
   return Array.from(new Set(parts
     .filter(part => part.type === 'tool' && typeof part.tool === 'string' && part.tool.trim().length > 0)
     .map(part => part.tool!)))
+}
+
+/** Structured tool detail. Note this is NOT de-duplicated the way
+ *  extractToolNames is: the same tool invoked three times with
+ *  different arguments is three rows in the detail view, even though
+ *  the collapsed header shows its name once. */
+function extractToolCalls(parts: OpenCodePartData[]): ToolCall[] {
+  const calls = parts
+    .filter(part => part.type === 'tool' && typeof part.tool === 'string' && part.tool.trim().length > 0)
+    .map(part => {
+      const state = part.state ?? {}
+      // `error` is populated instead of `output` on failure, and is the
+      // only place the reason is recorded.
+      const failed = state.status === 'error' || Boolean(state.error)
+      return makeToolCall({
+        name: part.tool!,
+        input: state.input,
+        result: failed ? (state.error ?? state.output) : state.output,
+        isError: failed,
+      })
+    })
+  return limitToolCalls(calls)
+}
+
+/** OpenCode stores reasoning as plain `reasoning` parts — no
+ *  encryption, so unlike Claude these are almost always readable. */
+function extractThinking(parts: OpenCodePartData[]): string | undefined {
+  return normalizeThinking(parts
+    .filter(part => part.type === 'reasoning' && typeof part.text === 'string')
+    .map(part => part.text ?? '')
+    .filter(text => text.trim().length > 0)
+    .join('\n\n'))
 }
 
 function modelFromMessage(message: OpenCodeMessageData): string {

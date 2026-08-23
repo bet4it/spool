@@ -539,11 +539,11 @@ function getIndexVersion(source: SessionSource): string {
   if (source === 'codex') return CODEX_INDEX_VERSION
   // v2: <session_context> stripping + JSONL support — force re-derivation of
   // contentText/titles for sessions indexed before the format change.
-  if (source === 'gemini') return 'gemini-v2-session-search-fts'
+  if (source === 'gemini') return 'gemini-v3-tool-calls'
   if (source === 'antigravity') return ANTIGRAVITY_INDEX_VERSION
   if (source === 'opencode') return OPENCODE_INDEX_VERSION
   if (source === 'grok') return GROK_INDEX_VERSION
-  return 'claude-v3-session-search-fts'
+  return 'claude-v4-tool-calls-and-thinking'
 }
 
 function collectSessionFiles(

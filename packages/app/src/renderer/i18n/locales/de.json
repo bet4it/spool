@@ -132,7 +132,12 @@
     "refreshConfirmDismissNote": "Ignorierte Funde bleiben ignoriert.",
     "refreshConfirmAction": "Aktualisieren",
     "refreshSuccess": "Sitzung aus Quelle aktualisiert",
-    "refreshError": "Aktualisierung fehlgeschlagen: {{error}}"
+    "refreshError": "Aktualisierung fehlgeschlagen: {{error}}",
+    "thinking": "Denkprozess",
+    "toolInput": "Eingabe",
+    "toolResult": "Ergebnis",
+    "toolFailed": "fehlgeschlagen",
+    "toolTruncated": "Für die Anzeige gekürzt"
   },
   "library": {
     "greeting": "Willkommen zurück",

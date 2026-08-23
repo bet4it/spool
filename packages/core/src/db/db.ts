@@ -14,7 +14,7 @@ export const DB_PATH = join(SPOOL_DIR, 'spool.db')
  * Latest schema version the running build knows how to migrate to.
  * Bump in lockstep with the last `db.pragma('user_version = N')` in runMigrations.
  */
-export const LATEST_SCHEMA_VERSION = 15
+export const LATEST_SCHEMA_VERSION = 16
 
 let _db: Database.Database | null = null
 let _wasNewDb = false
@@ -126,6 +126,13 @@ export function runMigrations(db: Database.Database): void {
       timestamp    TEXT NOT NULL,
       is_sidechain INTEGER NOT NULL DEFAULT 0,
       tool_names   TEXT NOT NULL DEFAULT '[]',
+      -- Structured tool detail (JSON array of ToolCall) and plaintext
+      -- reasoning. Deliberately NOT mirrored into messages_fts: the FTS
+      -- tables are external-content over content_text only, and tool
+      -- payloads are mostly file contents and shell output that would
+      -- swamp search results with matches the user never wrote.
+      tool_calls   TEXT NOT NULL DEFAULT '[]',
+      thinking     TEXT,
       seq          INTEGER NOT NULL
     );
 
@@ -728,6 +735,25 @@ export function runMigrations(db: Database.Database): void {
     db.pragma('user_version = 15')
   }
 
+  // ── v16: structured tool detail + reasoning on messages ────────────────
+  // Adds the two columns the transcript detail view reads. Purely
+  // additive, so no backup/rewrite: existing rows default to '[]' /
+  // NULL and render exactly as before (name-only tool chips) until the
+  // session is re-indexed. Re-indexing is driven by the per-source
+  // INDEX_VERSION bump in sync/syncer.ts, which happens lazily on the
+  // next sync rather than as a blocking migration here — a full
+  // re-parse of every transcript would stall startup on large
+  // libraries for a feature that degrades gracefully.
+  if (version < 16) {
+    if (!columnExists(db, 'messages', 'tool_calls')) {
+      db.exec(`ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'`)
+    }
+    if (!columnExists(db, 'messages', 'thinking')) {
+      db.exec(`ALTER TABLE messages ADD COLUMN thinking TEXT`)
+    }
+    db.pragma('user_version = 16')
+  }
+
   rebuildFtsTableIfEmpty(db, 'messages', 'messages_fts_trigram')
   rebuildFtsTableIfEmpty(db, 'session_search', 'session_search_fts')
   rebuildFtsTableIfEmpty(db, 'session_search', 'session_search_fts_trigram')
@@ -809,6 +835,11 @@ function ensureSchemaSanity(db: Database.Database): void {
   // its introduction (some test fixtures, very old installs) won't have
   // the column. ALTER ADD is a no-op when present.
   ensureCol('messages', 'msg_uuid', 'TEXT')
+  // v16 columns — same rationale as msg_uuid above: minimal fixtures
+  // and very old installs that skip straight to the head schema still
+  // need these to exist before insertMessages binds them.
+  ensureCol('messages', 'tool_calls', `TEXT NOT NULL DEFAULT '[]'`)
+  ensureCol('messages', 'thinking', 'TEXT')
 }
 
 /**

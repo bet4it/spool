@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { PublishedShareCacheItem } from './published-shares-cache.js'
+import { LATEST_SCHEMA_VERSION } from './db.js'
 
 const tempDirs: string[] = []
 const openDbs: Array<{ close: () => void }> = []
@@ -57,10 +58,12 @@ describe('published_shares_cache schema (v15)', () => {
     expect(names).toContain('idx_published_shares_cache_draft_id')
   })
 
-  it('user_version reaches 15 after migration', async () => {
+  // Pinned to the head schema version, not to v15: runMigrations always
+  // runs to the end, so this assertion moves with every schema bump.
+  it('user_version reaches the head schema version after migration', async () => {
     const { db } = await load()
     const v = (db.pragma('user_version') as Array<{ user_version: number }>)[0]?.user_version
-    expect(v).toBe(15)
+    expect(v).toBe(LATEST_SCHEMA_VERSION)
   })
 
   it('upsertMany inserts new rows and listAll returns them by published_at desc', async () => {

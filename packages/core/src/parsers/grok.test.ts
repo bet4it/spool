@@ -178,6 +178,29 @@ describe('parseGrokSession', () => {
     expect(parsed!.messages[1]!.toolNames).toEqual(['run_terminal_command', 'search_replace'])
   })
 
+  it('strips <workspace_result> wrapper from tool results', () => {
+    const fp = makeSessionDir({
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'grep for foo' }] },
+        { type: 'assistant', content: '', tool_calls: [{ id: 'tc1', name: 'grep' }] },
+        {
+          type: 'tool_result',
+          tool_call_id: 'tc1',
+          content: '<workspace_result workspace_path="/home/user/project">\nFound 3 matches\nsrc/index.ts:42:foo\nsrc/util.ts:15:foo\n</workspace_result>',
+        },
+        { type: 'assistant', content: 'Found it.' },
+      ],
+    })
+
+    const parsed = parseGrokSession(fp)
+    // The tool call's result should be unwrapped
+    const call = parsed!.messages[1]!.toolCalls?.[0]
+    expect(call?.result).toBe('Found 3 matches\nsrc/index.ts:42:foo\nsrc/util.ts:15:foo')
+    // The sidechain message should also be unwrapped
+    const sidechain = parsed!.messages.find(m => m.isSidechain)
+    expect(sidechain?.contentText).toBe('Found 3 matches\nsrc/index.ts:42:foo\nsrc/util.ts:15:foo')
+  })
+
   it('handles string content for user messages', () => {
     const fp = makeSessionDir({
       chatHistory: [
