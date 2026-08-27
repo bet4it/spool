@@ -97,7 +97,8 @@
     "hint_ask": "提問",
     "hint_viewAll": "檢視全部",
     "hint_close": "關閉",
-    "resultsArrow_other": "{{count}} 筆結果 →"
+    "resultsArrow_other": "{{count}} 筆結果 →",
+    "resultsMore": "更多結果 →"
   },
   "session": {
     "backToResults": "返回結果列表",

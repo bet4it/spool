@@ -566,7 +566,7 @@ export default function App() {
     setIsSearching(true)
     const scopedKey = searchScopeProject?.identityKey
     try {
-      const res = window.spool ? await window.spool.search(q, 20, undefined, false, scopedKey) : []
+      const res = window.spool ? await window.spool.search(q, 200, undefined, false, scopedKey) : []
       if (requestId !== searchRequestSeq.current) return
       startTransition(() => {
         setResults(res)
@@ -604,7 +604,7 @@ export default function App() {
     let ftsResults = results
     if (ftsResults.length === 0 && window.spool) {
       try {
-        ftsResults = await window.spool.search(q, 20, undefined, false, scopedKey)
+        ftsResults = await window.spool.search(q, 200, undefined, false, scopedKey)
       } catch (error) {
         setAiError(String(error))
         setAiStreaming(false)

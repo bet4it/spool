@@ -73,7 +73,7 @@ export default function SearchOverlay({
         noMatches: () => t('search.noMatches'),
         emptyNoSessions: t('search.noSessionsYet'),
         emptyInProject: () => t('search.noSessionsInProject'),
-        ...(searchDisabled ? {} : { resultsTotal: (count) => t('search.resultsArrow_other', { count }) }),
+        ...(searchDisabled ? {} : { resultsTotal: (count, mayHaveMore) => mayHaveMore ? t('search.resultsMore') : t('search.resultsArrow_other', { count }) }),
       }}
       onSubmit={(row: PaletteRow, query: string) => {
         onOpenResult(row.sessionUuid, row.messageId, query)

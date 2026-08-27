@@ -98,7 +98,8 @@
     "hint_ask": "demander",
     "hint_viewAll": "tout afficher",
     "hint_close": "fermer",
-    "resultsArrow_other": "{{count}} résultats →"
+    "resultsArrow_other": "{{count}} résultats →",
+    "resultsMore": "plus de résultats →"
   },
   "session": {
     "backToResults": "Retour aux résultats",

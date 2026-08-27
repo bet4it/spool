@@ -44,8 +44,10 @@ export type CommandPaletteLabels = {
   /** Body when scope is set and that scope has no sessions. */
   emptyInProject: (projectName: string) => string
   /** Footer affordance for search-mode results — clickable when `onCommit`
-   *  is set (jumps to the full results page). Omit to hide. */
-  resultsTotal?: (count: number) => string
+   *  is set (jumps to the full results page). Omit to hide. `mayHaveMore`
+   *  is true when the overlay's own result limit was reached, signalling
+   *  that the full results page likely has additional matches. */
+  resultsTotal?: (count: number, mayHaveMore: boolean) => string
 }
 
 type Props = {
@@ -455,10 +457,10 @@ export default function CommandPalette({
                 onClick={() => onCommit(query)}
                 className="flex-none rounded-md px-1.5 py-0.5 -my-0.5 hover:bg-warm-surface2 hover:text-warm-text dark:hover:bg-dark-surface2 dark:hover:text-dark-text transition-colors"
               >
-                {labels.resultsTotal(rows.length)}
+                {labels.resultsTotal(rows.length, rows.length >= SEARCH_LIMIT)}
               </button>
             ) : (
-              <span className="flex-none">{labels.resultsTotal(rows.length)}</span>
+              <span className="flex-none">{labels.resultsTotal(rows.length, rows.length >= SEARCH_LIMIT)}</span>
             )
           )}
         </div>

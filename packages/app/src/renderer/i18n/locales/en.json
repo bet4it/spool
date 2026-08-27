@@ -98,7 +98,8 @@
     "hint_ask": "ask",
     "hint_viewAll": "view all",
     "hint_close": "close",
-    "resultsArrow_other": "{{count}} results →"
+    "resultsArrow_other": "{{count}} results →",
+    "resultsMore": "more results →"
   },
   "session": {
     "backToResults": "Back to results",

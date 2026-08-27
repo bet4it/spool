@@ -97,7 +97,8 @@
     "hint_ask": "提问",
     "hint_viewAll": "查看全部",
     "hint_close": "关闭",
-    "resultsArrow_other": "{{count}} 条结果 →"
+    "resultsArrow_other": "{{count}} 条结果 →",
+    "resultsMore": "更多结果 →"
   },
   "session": {
     "backToResults": "返回结果列表",

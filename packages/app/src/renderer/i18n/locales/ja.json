@@ -97,7 +97,8 @@
     "hint_ask": "質問",
     "hint_viewAll": "すべて表示",
     "hint_close": "閉じる",
-    "resultsArrow_other": "{{count}} 件の結果 →"
+    "resultsArrow_other": "{{count}} 件の結果 →",
+    "resultsMore": "もっと見る →"
   },
   "session": {
     "backToResults": "結果一覧に戻る",
