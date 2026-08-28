@@ -1,28 +1,23 @@
 import type { ReactNode } from 'react'
 import AppTopBar from './AppTopBar.js'
 import SidebarRail, { FOLD_EASE } from './SidebarRail.js'
+import SidebarResizeHandle from './SidebarResizeHandle.js'
 
 const RIGHT_PANEL_WIDTH = 280
 
 type Props = {
-  /** Left sidebar (Library / Shares / Projects rail). The caller
-   *  owns this so each page can pass the same Sidebar instance with
-   *  its app-wide handlers wired up. */
   sidebar: ReactNode
   sidebarCollapsed: boolean
+  sidebarWidth: number
+  sidebarResizing: boolean
+  onSidebarWidthChange: (width: number) => void
+  onSidebarResizeStart: () => void
+  onSidebarResizeEnd: (width: number) => void
   onToggleSidebar: () => void
   trafficLightInset?: boolean
-  /** Page chrome that gets portaled into the top bar's flex slot
-   *  (back arrow, title, primary action buttons). Pass null on pages
-   *  that don't need any. */
   topBar?: ReactNode
-  /** Page-level right column (e.g. share editor's style picker).
-   *  Sits below the AppTopBar so the bar spans the full window width
-   *  and its primary actions stay reachable while the panel scrolls. */
   rightPanel?: ReactNode
-  /** Controls the right column's animated width. */
   rightPanelOpen?: boolean
-  /** Page body content — rendered in the central content area. */
   children: ReactNode
 }
 
@@ -39,6 +34,11 @@ type Props = {
 export default function PageLayout({
   sidebar,
   sidebarCollapsed,
+  sidebarWidth,
+  sidebarResizing,
+  onSidebarWidthChange,
+  onSidebarResizeStart,
+  onSidebarResizeEnd,
   onToggleSidebar,
   trafficLightInset = true,
   topBar,
@@ -52,6 +52,8 @@ export default function PageLayout({
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={onToggleSidebar}
         trafficLightInset={trafficLightInset}
+        sidebarWidth={sidebarWidth}
+        sidebarResizing={sidebarResizing}
       >
         {topBar}
       </AppTopBar>
@@ -59,20 +61,22 @@ export default function PageLayout({
         <SidebarRail
           collapsed={sidebarCollapsed}
           collapsedWidth={!trafficLightInset ? 'chrome' : 'none'}
+          width={sidebarWidth}
+          resizing={sidebarResizing}
         >
           {sidebar}
         </SidebarRail>
+        {!sidebarCollapsed && (
+          <SidebarResizeHandle
+            width={sidebarWidth}
+            onWidthChange={onSidebarWidthChange}
+            onResizeStart={onSidebarResizeStart}
+            onResizeEnd={onSidebarResizeEnd}
+          />
+        )}
         <div className="relative flex flex-col flex-1 min-w-0">
           {children}
         </div>
-        {/* Outer animates width 0 ↔ 280; inner is hardcoded to
-         *  RIGHT_PANEL_WIDTH so ControlPanel's ~1000-node subtree doesn't
-         *  re-lay out each frame — outer just clips. (Sidebar's content
-         *  gets the same treatment for free because Sidebar's root is
-         *  `w-60 flex-none`; ControlPanel's root is `w-full` so we apply
-         *  the fixed width here.) Duration is scaled so per-pixel velocity
-         *  matches the sidebar's 280ms / 240px ≈ 1.17ms/px — otherwise the
-         *  wider right panel would snap ~17% faster than the sidebar. */}
         <div
           className="flex-none overflow-hidden"
           style={{

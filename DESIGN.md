@@ -15,7 +15,7 @@
 
 ## Layout Philosophy
 - **Core principle:** Spool is an AI session library. The sidebar (projects) and main pane (sessions) are the home; search is one of several entry points, reachable via ⌘K.
-- **Shell:** Persistent left sidebar (240px) + main pane. Sidebar lists projects derived from `project_groups_v` and is always visible across every main-pane state.
+- **Shell:** Persistent resizable left sidebar (240px default, 200–360px) + main pane. Sidebar lists projects derived from `project_groups_v` and is always visible across every main-pane state.
 - **Sidebar:** Warm surface background, soft right border. Top-left wordmark `Spool.`, then a `PROJECTS` section label with a sort menu, then project rows. A divider separates derived projects from the always-last `Loose` entry.
 - **Project row:** Display name on the left, faint source-color dots in the middle, monospace count on the right. Active row uses `surface2` background. Hover lifts to the same `surface2`.
 - **Library home (default main pane):** Pinned section (collapsible, only when non-empty) above a recent-sessions feed bucketed by date. No centered hero, no global search box — entry to search is ⌘K or the top-right input on the results page.
@@ -24,7 +24,7 @@
 - **Search overlay (⌘K):** Floats above the current main pane on a dimmed backdrop, scoped to `All` or the current project. Same overlay surface for Fast and AI modes.
 - **Approach:** Library client. Window width ~960px to fit sidebar + main pane comfortably. Not a search utility, not a dashboard.
 - **Alignment:** Left-aligned everywhere. No centered hero state in the shell — the centered ⌘K overlay is the only exception.
-- **Max content width:** Main pane content stays at ~720px max for readability; sidebar fixed 240px.
+- **Max content width:** Main pane content stays at ~720px max for readability; sidebar resizable 200–360px, defaults to 240px.
 - **Border radius:** 10px for cards / 8px for inputs / 6px for sidebar rows and buttons / 4px for badges. Pill (9999px) reserved for the ⌘K overlay search input and mode toggle.
 
 ## Typography

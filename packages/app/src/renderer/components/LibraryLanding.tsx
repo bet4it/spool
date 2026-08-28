@@ -5,6 +5,7 @@ import type { RecentSessionSortBasis, Session, SessionsCursor } from '@spool-lab
 import VirtualSessionList, { type SessionListRow } from './VirtualSessionList.js'
 import { FeaturedEmptyState } from './EmptyState.js'
 import Menu from './Menu.js'
+import { buildSessionForest, type SessionTreeNode } from '../lib/sessionTree.js'
 
 type BucketKey = 'today' | 'yesterday' | 'earlierWeek' | 'earlierMonth' | 'older'
 
@@ -180,10 +181,24 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, sortBas
 
   // i18n.language is a stable per-locale key; depending on `t` (which
   // changes identity on most renders) would rebuild rows constantly.
+  const sessionForest = useMemo(() => buildSessionForest(recentSessions ?? []), [recentSessions])
+  const treeNodes = useMemo(() => {
+    const nodes = new Map<string, SessionTreeNode>()
+    const visit = (node: SessionTreeNode): void => {
+      nodes.set(node.session.sessionUuid, node)
+      for (const child of node.children) visit(child)
+    }
+    for (const root of sessionForest) visit(root)
+    return nodes
+  }, [sessionForest])
   const buckets = useMemo(
-    () => (recentSessions ? bucketByDate(recentSessions, looseTranslator(t), sortBasis) : []),
+    () => bucketByDate(
+      sessionForest.map((node) => node.session),
+      looseTranslator(t),
+      sortBasis,
+    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recentSessions, i18n.language, sortBasis],
+    [sessionForest, i18n.language, sortBasis],
   )
   const totalSessions = pinnedSessions.length + (recentSessions?.length ?? 0)
   const pinnedLabel = useMemo(
@@ -216,20 +231,13 @@ export default function LibraryLanding({ onOpenSession, onCopySessionId, sortBas
         collapsible: false,
       })
       for (const s of bucket.sessions) {
-        out.push({
-          kind: 'session',
-          id: s.sessionUuid,
-          session: s,
-          showProject: true,
-          bucket: bucket.key,
-          dateIso: dateForSession(s, sortBasis),
-          headerId: `bucket-${bucket.key}`,
-        })
+        const node = treeNodes.get(s.sessionUuid)
+        if (node) appendTreeRows(out, node, bucket.key, `bucket-${bucket.key}`, sortBasis)
       }
     }
     out.push({ kind: 'footer', id: 'footer', loading: loadingMore, exhausted, total: totalSessions })
     return out
-  }, [pinnedSessions, pinnedLabel, buckets, sortBasis, loadingMore, exhausted, totalSessions])
+  }, [pinnedSessions, pinnedLabel, buckets, treeNodes, sortBasis, loadingMore, exhausted, totalSessions])
 
   return (
     <div data-testid="library-landing" className="flex flex-col h-full overflow-hidden">
@@ -305,6 +313,35 @@ function LibrarySortControl({
       />
     </div>
   )
+}
+
+function appendTreeRows(
+  rows: SessionListRow[],
+  node: SessionTreeNode,
+  bucket: BucketKey,
+  headerId: string,
+  sortBasis: RecentSessionSortBasis,
+  depth = 0,
+  ancestorIds: string[] = [],
+): void {
+  rows.push({
+    kind: 'session',
+    id: node.session.sessionUuid,
+    session: node.session,
+    showProject: true,
+    bucket,
+    dateIso: dateForSession(node.session, sortBasis),
+    headerId,
+    treeDepth: depth,
+    treeAncestorIds: ancestorIds,
+    treeChildCount: node.children.length,
+  })
+  for (const child of node.children) {
+    appendTreeRows(rows, child, bucket, headerId, sortBasis, depth + 1, [
+      ...ancestorIds,
+      node.session.sessionUuid,
+    ])
+  }
 }
 
 function looseTranslator(t: ReturnType<typeof useTranslation>['t']): TranslateFn {

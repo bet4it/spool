@@ -7,7 +7,7 @@ import type { BucketKey } from '../../shared/formatDate.js'
 
 export type SessionListRow =
   | { kind: 'header'; id: string; label: ReactNode; testId?: string; dataAttr?: Record<string, string>; collapsible?: boolean; defaultOpen?: boolean; sticky?: boolean }
-  | { kind: 'session'; id: string; session: Session; pinned?: boolean; showProject?: boolean; bucket?: BucketKey; dateIso?: string; headerId: string | null }
+  | { kind: 'session'; id: string; session: Session; pinned?: boolean; showProject?: boolean; bucket?: BucketKey; dateIso?: string; headerId: string | null; treeDepth?: number; treeAncestorIds?: string[]; treeChildCount?: number }
   | { kind: 'footer'; id: string; loading: boolean; exhausted: boolean; total: number }
 
 type Props = {
@@ -66,6 +66,7 @@ export default function VirtualSessionList({
   // the set are open (we keep "closed" rather than "open" so newly arriving
   // headers default to open without needing to pre-populate state).
   const [closed, setClosed] = useState<Set<string>>(new Set())
+  const [openTreeNodes, setOpenTreeNodes] = useState<Set<string>>(new Set())
 
   const toggleHeader = useCallback((id: string) => {
     setClosed(prev => {
@@ -76,13 +77,24 @@ export default function VirtualSessionList({
     })
   }, [])
 
+  const toggleTreeNode = useCallback((id: string) => {
+    setOpenTreeNodes(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   const visible = useMemo<SessionListRow[]>(() => {
-    if (!collapsibleSections || closed.size === 0) return rows
     return rows.filter(r => {
-      if (r.kind === 'session') return r.headerId == null || !closed.has(r.headerId)
+      if (r.kind === 'session') {
+        if (collapsibleSections && r.headerId != null && closed.has(r.headerId)) return false
+        return r.treeAncestorIds?.every(id => openTreeNodes.has(id)) ?? true
+      }
       return true
     })
-  }, [rows, closed, collapsibleSections])
+  }, [rows, closed, collapsibleSections, openTreeNodes])
 
   const stickySections = useMemo(() => buildStickySections(visible), [visible])
   // Interleave a `null` group-header placeholder at the start of each group
@@ -112,13 +124,21 @@ export default function VirtualSessionList({
         {...(row.showProject ? { showProject: true } : {})}
         {...(row.bucket ? { bucket: row.bucket } : {})}
         {...(row.dateIso ? { dateIso: row.dateIso } : {})}
+        {...(row.treeDepth !== undefined ? { treeDepth: row.treeDepth } : {})}
+        {...(row.treeChildCount
+          ? {
+              treeChildCount: row.treeChildCount,
+              treeExpanded: openTreeNodes.has(row.session.sessionUuid),
+              onToggleTree: () => toggleTreeNode(row.session.sessionUuid),
+            }
+          : {})}
         {...(onPinChange ? { onPinChange } : {})}
         onOpenSession={onOpenSession}
         onCopySessionId={onCopySessionId}
         {...(onShare ? { onShare } : {})}
       />
     )
-  }, [closed, collapsibleSections, onCopySessionId, onOpenSession, onPinChange, onShare, toggleHeader])
+  }, [closed, collapsibleSections, onCopySessionId, onOpenSession, onPinChange, onShare, openTreeNodes, toggleHeader, toggleTreeNode])
 
   if (stickyHeaders && stickySections.groups.length > 0) {
     return (

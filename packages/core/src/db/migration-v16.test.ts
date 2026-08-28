@@ -28,8 +28,8 @@ function seedSession(db: Database.Database, sessionUuid = 'sess-1'): number {
 }
 
 describe('migration v16 — tool detail on messages', () => {
-  it('LATEST_SCHEMA_VERSION is 16', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(16)
+  it('LATEST_SCHEMA_VERSION is 18', () => {
+    expect(LATEST_SCHEMA_VERSION).toBe(18)
   })
 
   it('adds tool_calls and thinking columns to messages', () => {

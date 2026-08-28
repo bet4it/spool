@@ -68,14 +68,21 @@ export function listRecentSessionsPage(
   options: { limit?: number; cursor?: SessionsCursor; sortBasis?: RecentSessionSortBasis } = {},
 ): SessionsPage {
   const { limit = DEFAULT_PAGE_SIZE, cursor, sortBasis = 'started_at' } = options
-  const conditions: string[] = ['s.message_count > 0']
+  const conditions: string[] = [
+    's.message_count > 0',
+    `(s.parent_session_uuid IS NULL OR NOT EXISTS (
+      SELECT 1 FROM sessions parent
+      WHERE parent.session_uuid = s.parent_session_uuid
+        AND parent.message_count > 0
+    ))`,
+  ]
   const params: unknown[] = []
   if (cursor) {
     const c = recentCursorWhere(sortBasis, cursor)
     conditions.push(c.sql)
     params.push(...c.params)
   }
-  return executePage(db, conditions, params, 'recent', limit, sortBasis)
+  return executeRecentTreePage(db, conditions, params, limit, sortBasis)
 }
 
 /** Sessions whose project display path contains the given substring
@@ -182,6 +189,66 @@ function executePage(
       }
     : null
   return { sessions, nextCursor }
+}
+
+/** Pages by root sessions, then loads their descendants with a
+ *  recursive CTE so child sessions don't consume root pagination slots. */
+function executeRecentTreePage(
+  db: Database.Database,
+  conditions: string[],
+  params: unknown[],
+  limit: number,
+  recentSortBasis: RecentSessionSortBasis = 'started_at',
+): SessionsPage {
+  const rows = db
+    .prepare(`
+    ${SESSION_SELECT}
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${orderByClause('recent', recentSortBasis)}
+    LIMIT ?
+  `)
+    .all(...params, limit + 1) as Array<Record<string, unknown>>
+
+  const hasMore = rows.length > limit
+  const rootRows = hasMore ? rows.slice(0, limit) : rows
+  const roots = rootRows.map(rowToSession)
+  const lastRoot = roots.at(-1)
+  const nextCursor =
+    hasMore && lastRoot
+      ? {
+          startedAt: lastRoot.startedAt,
+          endedAt: lastRoot.endedAt,
+          sessionUuid: lastRoot.sessionUuid,
+          messageCount: lastRoot.messageCount,
+          title: lastRoot.title ?? '',
+        }
+      : null
+
+  if (roots.length === 0) return { sessions: [], nextCursor }
+
+  const placeholders = roots.map(() => '?').join(',')
+  const descendants = db
+    .prepare(`
+    WITH RECURSIVE descendant_ids(session_uuid) AS (
+      SELECT child.session_uuid
+      FROM sessions child
+      WHERE child.parent_session_uuid IN (${placeholders})
+      UNION
+      SELECT child.session_uuid
+      FROM sessions child
+      JOIN descendant_ids parent ON child.parent_session_uuid = parent.session_uuid
+    )
+    ${SESSION_SELECT}
+    WHERE s.session_uuid IN (SELECT session_uuid FROM descendant_ids)
+      AND s.message_count > 0
+    ORDER BY s.started_at ASC, s.session_uuid ASC
+  `)
+    .all(...roots.map((root) => root.sessionUuid)) as Array<Record<string, unknown>>
+
+  return {
+    sessions: [...roots, ...descendants.map(rowToSession)],
+    nextCursor,
+  }
 }
 
 function orderByClause(

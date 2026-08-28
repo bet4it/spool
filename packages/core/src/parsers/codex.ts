@@ -11,7 +11,7 @@ interface CodexRecord {
   payload?: Record<string, unknown>
 }
 
-export const CODEX_INDEX_VERSION = 'codex-v9-truncated-exec'
+export const CODEX_INDEX_VERSION = 'codex-v11-parent-session-tree'
 
 const READ_CHUNK_SIZE = 1024 * 1024
 
@@ -32,6 +32,7 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
   const eventMessages: ParsedMessage[] = []
   const responseMessages: ParsedMessage[] = []
   let sessionUuid = ''
+  let parentSessionUuid: string | null = null
   let cwd = ''
   let model = ''
   let isInternalAssessmentSession = false
@@ -72,6 +73,16 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
 
     if (type === 'session_meta' && payload) {
       if (!sessionUuid && payload['id']) sessionUuid = payload['id'] as string
+      // parent_thread_id appears at the top level of session_meta in
+      // some Codex versions, and nested under
+      // source.subagent.thread_spawn in others.
+      const src = payload['source'] as Record<string, unknown> | undefined
+      const subagent = src?.['subagent'] as Record<string, unknown> | undefined
+      const threadSpawn = subagent?.['thread_spawn'] as Record<string, unknown> | undefined
+      const rawParent =
+        (typeof payload['parent_thread_id'] === 'string' && payload['parent_thread_id']) ||
+        (typeof threadSpawn?.['parent_thread_id'] === 'string' && threadSpawn['parent_thread_id'])
+      if (rawParent) parentSessionUuid = rawParent
       if (payload['cwd']) cwd = payload['cwd'] as string
       const source = payload['source']
       if (isGuardianSubagentSource(source)) isInternalAssessmentSession = true
@@ -257,6 +268,7 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
     session: {
       source: 'codex',
       sessionUuid: sessionUuid || filePath,
+      parentSessionUuid,
       filePath,
       title,
       cwd,

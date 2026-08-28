@@ -16,6 +16,7 @@ import {
   type PinnedSortOrder,
 } from '../../shared/pinnedSort.js'
 import Menu from './Menu.js'
+import { DEFAULT_SIDEBAR_WIDTH } from './SidebarRail.js'
 
 type Props = {
   activeIdentityKey: string | null
@@ -45,9 +46,10 @@ type Props = {
     onToggle: () => void
   }
   chromeOnly?: boolean
+  width?: number
 }
 
-export default function Sidebar({ activeIdentityKey, activeSessionUuid = null, onSelectProject, onSelectSession, onSelectHome, isLibraryActive = false, onSelectShares, isSharesActive = false, onSelectSecurity, isSecurityActive = false, onOpenSearch, syncStatus, status, onSettingsClick, showSourceDots = true, showSessionCount = true, sortOrder = DEFAULT_SIDEBAR_SORT_ORDER, onSortOrderChange, pinnedSortOrder = DEFAULT_PINNED_SORT_ORDER, onPinnedSortOrderChange, onCopySessionId, onShareSession, sidebarToggle, chromeOnly = false }: Props) {
+export default function Sidebar({ activeIdentityKey, activeSessionUuid = null, onSelectProject, onSelectSession, onSelectHome, isLibraryActive = false, onSelectShares, isSharesActive = false, onSelectSecurity, isSecurityActive = false, onOpenSearch, syncStatus, status, onSettingsClick, showSourceDots = true, showSessionCount = true, sortOrder = DEFAULT_SIDEBAR_SORT_ORDER, onSortOrderChange, pinnedSortOrder = DEFAULT_PINNED_SORT_ORDER, onPinnedSortOrderChange, onCopySessionId, onShareSession, sidebarToggle, chromeOnly = false, width = DEFAULT_SIDEBAR_WIDTH }: Props) {
   const { t } = useTranslation()
   const sidebarSortLabel = (value: SidebarSortOrder): string => {
     switch (value) {
@@ -106,11 +108,12 @@ export default function Sidebar({ activeIdentityKey, activeSessionUuid = null, o
     <aside
       data-testid="sidebar"
       className={[
-        'w-60 flex-none flex flex-col h-full overflow-hidden transition-colors duration-[280ms] ease-out',
+        'flex-none flex flex-col h-full overflow-hidden transition-colors duration-[280ms] ease-out',
         chromeOnly
           ? 'bg-warm-bg dark:bg-dark-bg'
           : 'bg-warm-surface dark:bg-dark-surface',
       ].join(' ')}
+      style={{ width }}
     >
       {sidebarToggle && (
         <div className="px-2 pt-1 flex-none flex flex-col gap-0.5">

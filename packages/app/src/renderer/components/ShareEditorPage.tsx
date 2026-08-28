@@ -49,6 +49,11 @@ type Props = {
    *  state as the rest of the app. */
   sidebar: ReactNode
   sidebarCollapsed: boolean
+  sidebarWidth: number
+  sidebarResizing: boolean
+  onSidebarWidthChange: (width: number) => void
+  onSidebarResizeStart: () => void
+  onSidebarResizeEnd: (width: number) => void
   onToggleSidebar: () => void
   trafficLightInset?: boolean
 }
@@ -73,6 +78,11 @@ export default function ShareEditorPage({
   onTogglePanel,
   sidebar,
   sidebarCollapsed,
+  sidebarWidth,
+  sidebarResizing,
+  onSidebarWidthChange,
+  onSidebarResizeStart,
+  onSidebarResizeEnd,
   onToggleSidebar,
   trafficLightInset = true,
 }: Props) {
@@ -742,6 +752,11 @@ export default function ShareEditorPage({
     <PageLayout
       sidebar={sidebar}
       sidebarCollapsed={sidebarCollapsed}
+      sidebarWidth={sidebarWidth}
+      sidebarResizing={sidebarResizing}
+      onSidebarWidthChange={onSidebarWidthChange}
+      onSidebarResizeStart={onSidebarResizeStart}
+      onSidebarResizeEnd={onSidebarResizeEnd}
       onToggleSidebar={onToggleSidebar}
       trafficLightInset={trafficLightInset}
       topBar={topBarContent}

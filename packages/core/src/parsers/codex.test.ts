@@ -96,6 +96,50 @@ describe('parseCodexSession', () => {
     expect(parseCodexSession(fp)).toBeNull()
   })
 
+  it('preserves the parent thread for review and spawned subagent sessions', () => {
+    const fp = writeTmpSession([
+      {
+        timestamp: '2026-04-05T12:05:00Z',
+        type: 'session_meta',
+        payload: {
+          id: 'session-child',
+          parent_thread_id: 'session-parent',
+          thread_source: 'subagent',
+          source: { subagent: 'review' },
+          cwd: '/tmp/project',
+        },
+      },
+      {
+        timestamp: '2026-04-05T12:05:01Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Review the current changes.' },
+      },
+    ])
+
+    expect(parseCodexSession(fp)?.parentSessionUuid).toBe('session-parent')
+  })
+
+  it('preserves the parent thread when parent_thread_id is nested in source.subagent.thread_spawn', () => {
+    const fp = writeTmpSession([
+      {
+        timestamp: '2026-04-05T12:05:00Z',
+        type: 'session_meta',
+        payload: {
+          id: 'session-child',
+          cwd: '/tmp/project',
+          source: { subagent: { thread_spawn: { parent_thread_id: 'session-parent', depth: 1 } } },
+        },
+      },
+      {
+        timestamp: '2026-04-05T12:05:01Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Review the current changes.' },
+      },
+    ])
+
+    expect(parseCodexSession(fp)?.parentSessionUuid).toBe('session-parent')
+  })
+
   it('streams via readSync without depending on whole-file readFileSync (V8 string-limit safe)', async () => {
     const fp = writeTmpSession([
       {

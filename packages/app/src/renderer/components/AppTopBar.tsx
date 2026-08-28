@@ -2,10 +2,14 @@ import type { CSSProperties, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PanelLeft } from 'lucide-react'
 
+import { DEFAULT_SIDEBAR_WIDTH } from './SidebarRail.js'
+
 type Props = {
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
   trafficLightInset?: boolean
+  sidebarWidth?: number
+  sidebarResizing?: boolean
   /** Page-level chrome (page title, primary action). Rendered into a
    *  flex slot to the right of the sidebar fold toggle. */
   children?: ReactNode
@@ -18,13 +22,15 @@ type Props = {
  * boundary below it, so the eye reads "left column + right column"
  * running top-to-bottom.
  */
-export default function AppTopBar({ sidebarCollapsed, onToggleSidebar, trafficLightInset = true, children }: Props) {
+export default function AppTopBar({ sidebarCollapsed, onToggleSidebar, trafficLightInset = true, sidebarWidth = DEFAULT_SIDEBAR_WIDTH, sidebarResizing = false, children }: Props) {
   const { t } = useTranslation()
   const dragStyle = { WebkitAppRegion: 'drag' } as CSSProperties
   const noDragStyle = { WebkitAppRegion: 'no-drag' } as CSSProperties
   const sidebarTitle = sidebarCollapsed
     ? `${t('sidebar.expand')} (⌘B)`
     : `${t('sidebar.collapse')} (⌘B)`
+  const collapsedWidth = trafficLightInset ? 0 : 48
+  const widthTransition = sidebarResizing ? '' : 'transition-[width] duration-[280ms] ease-out'
 
   if (!trafficLightInset && !children) {
     return null
@@ -39,10 +45,8 @@ export default function AppTopBar({ sidebarCollapsed, onToggleSidebar, trafficLi
           with the content pane below. */}
       <div className="absolute inset-0 flex pointer-events-none" aria-hidden="true">
         <div
-          className={[
-            'flex-none transition-[width] duration-[280ms] ease-out bg-warm-surface dark:bg-dark-surface',
-            sidebarCollapsed ? (trafficLightInset ? 'w-0' : 'w-12') : 'w-60',
-          ].join(' ')}
+          className={`flex-none ${widthTransition} bg-warm-surface dark:bg-dark-surface`}
+          style={{ width: sidebarCollapsed ? collapsedWidth : sidebarWidth }}
         />
         <div className="flex-1 bg-warm-bg dark:bg-dark-bg" />
       </div>
@@ -65,19 +69,15 @@ export default function AppTopBar({ sidebarCollapsed, onToggleSidebar, trafficLi
               />
             </div>
             <div
-              className={[
-                'flex-none transition-[width] duration-[280ms] ease-out',
-                sidebarCollapsed ? 'w-0' : 'w-[134px]',
-              ].join(' ')}
+              className={`flex-none ${widthTransition}`}
+              style={{ width: sidebarCollapsed ? 0 : Math.max(0, sidebarWidth - 106) }}
               aria-hidden="true"
             />
           </>
         ) : (
           <div
-            className={[
-              'flex-none transition-[width] duration-[280ms] ease-out',
-              sidebarCollapsed ? 'w-12' : 'w-60',
-            ].join(' ')}
+            className={`flex-none ${widthTransition}`}
+            style={{ width: sidebarCollapsed ? 48 : sidebarWidth }}
             aria-hidden="true"
           />
         )}

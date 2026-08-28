@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { SquareTerminal, MoreHorizontal, Copy, Loader2, SquarePen, AlertTriangle, Check } from 'lucide-react'
+import { SquareTerminal, MoreHorizontal, Copy, Loader2, SquarePen, AlertTriangle, Check, ChevronRight, CornerDownRight } from 'lucide-react'
 import type { Session } from '@spool-lab/core'
 import { SourceBadge } from './Badges.js'
 import PinButton from './PinButton.js'
@@ -24,9 +24,13 @@ type Props = {
   onOpenSession: (uuid: string) => void
   onCopySessionId: (source: Session['source']) => void
   onShare?: (uuid: string) => void
+  treeDepth?: number
+  treeChildCount?: number
+  treeExpanded?: boolean
+  onToggleTree?: () => void
 }
 
-export default function SessionRow({ session, pinned = false, showProject = false, bucket, dateIso, onPinChange, onOpenSession, onCopySessionId, onShare }: Props) {
+export default function SessionRow({ session, pinned = false, showProject = false, bucket, dateIso, onPinChange, onOpenSession, onCopySessionId, onShare, treeDepth = 0, treeChildCount = 0, treeExpanded = false, onToggleTree }: Props) {
   const { t } = useTranslation()
   const [resuming, setResuming] = useState(false)
 
@@ -60,18 +64,46 @@ export default function SessionRow({ session, pinned = false, showProject = fals
     <div
       data-testid="session-row"
       data-session-uuid={session.sessionUuid}
+      data-tree-depth={treeDepth}
       {...(pinned ? { 'data-pinned': '' } : {})}
       role="button"
       tabIndex={0}
       onClick={handleOpen}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           handleOpen()
         }
       }}
       className="group flex items-start gap-3 px-5 py-3 hover:bg-warm-surface dark:hover:bg-dark-surface transition-colors duration-75 cursor-pointer focus:outline-none focus:bg-warm-surface dark:focus:bg-dark-surface"
+      style={{ paddingLeft: 20 + Math.min(treeDepth, 6) * 20 }}
     >
+      <div className="text-warm-faint dark:text-dark-muted flex h-5 w-4 flex-none items-center justify-center">
+        {treeChildCount > 0 && onToggleTree ? (
+          <button
+            type="button"
+            data-testid="session-tree-toggle"
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleTree()
+            }}
+            aria-label={`${t(treeExpanded ? 'common.collapse' : 'common.expand')}: ${title}`}
+            aria-expanded={treeExpanded}
+            title={t('library.childSessions', { count: treeChildCount })}
+            className="text-warm-muted dark:text-dark-muted hover:bg-warm-surface2 dark:hover:bg-dark-surface2 hover:text-warm-text dark:hover:text-dark-text focus-visible:ring-warm-accent dark:focus-visible:ring-dark-accent inline-flex h-6 w-6 items-center justify-center rounded transition-colors duration-75 focus-visible:ring-1 focus-visible:outline-none"
+          >
+            <ChevronRight
+              size={13}
+              strokeWidth={1.7}
+              aria-hidden
+              className={`transition-transform duration-150 motion-reduce:transition-none ${treeExpanded ? 'rotate-90' : ''}`}
+            />
+          </button>
+        ) : treeDepth > 0 ? (
+          <CornerDownRight size={12} strokeWidth={1.5} aria-hidden />
+        ) : null}
+      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5">
           <SourceBadge source={session.source} />
@@ -88,6 +120,7 @@ export default function SessionRow({ session, pinned = false, showProject = fals
           )}
           {date} · {t('session.msgs_other', { count: session.messageCount })}
           {model && ` · ${model}`}
+          {treeChildCount > 0 && ` · ${t('library.childSessions', { count: treeChildCount })}`}
         </p>
       </div>
 

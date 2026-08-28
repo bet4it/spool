@@ -363,6 +363,7 @@ export class Syncer {
           projectId,
           sourceId,
           sessionUuid: parsed.sessionUuid,
+          parentSessionUuid: parsed.parentSessionUuid ?? null,
           filePath,
           title: parsed.title,
           startedAt: parsed.startedAt,
