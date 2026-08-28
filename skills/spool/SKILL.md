@@ -63,3 +63,25 @@ Include the output as context in your next reply.
 - Add `--since 7d` to limit to the last 7 days
 - Use quotes for exact phrases: `/spool "read replicas"`
 - Run `spool sync` first if results seem stale
+
+## Browsing sessions by project
+
+To list sessions for a directory/project, pick the command by intent:
+
+- **`spool projects <name>` — complete history of ONE project.** Resolves the
+  query (name, identity key, path, or cwd) to a single project and lists all
+  its sessions from the index. Ambiguous names report candidates instead of
+  guessing. Use this when asked "show all sessions in <dir>" or "how many
+  sessions did I have for X".
+
+- **`spool list -p <substring>` — cross-project path-substring view.**
+  Matches every project whose display path contains the substring (e.g.
+  `-p libafl` merges LibAFL, libafl_qemu_fuzzer, qemu-libafl-bridge …).
+  Use this when the question spans sibling/related directories, or combined
+  with `-s <source>` for "recent grok sessions under paths matching X".
+
+- **`spool list` (no -p) — global recent timeline.** `-n` caps output;
+  without `-p`/`-s` it is the "what was I working on lately" view.
+
+All three honor `-n <n>` (default 20) and `--json`. `-n` is a hard cap on
+returned rows — there is no hidden fetch window; raise `-n` to see more.
