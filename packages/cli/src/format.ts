@@ -5,7 +5,7 @@ export function printSession(s: Session): void {
   const source = s.source.padEnd(7)
   const project = s.projectDisplayName.slice(0, 20).padEnd(20)
   const title = (s.title ?? '(no title)').slice(0, 50)
-  console.log(`${source} ${date}  ${project}  ${title}`)
+  console.log(`${source} ${date}  ${project}  ${title}  ${s.sessionUuid}`)
 }
 
 export function formatDate(iso: string): string {
