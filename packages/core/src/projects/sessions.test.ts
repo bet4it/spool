@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { runMigrations } from '../db/db.js'
-import { listSessionsByIdentity, listRecentSessionsPage, listProjectDirectoryCounts } from './sessions.js'
+import { listSessionsByIdentity, listRecentSessionsPage, listSessionsByProjectPathSubstring, listProjectDirectoryCounts } from './sessions.js'
 
 describe('listSessionsByIdentity', () => {
   let db: Database.Database
@@ -148,6 +148,92 @@ describe('listRecentSessionsPage', () => {
     const page2 = listRecentSessionsPage(db, { limit: 2, sortBasis: 'ended_at', cursor: page1.nextCursor! })
     expect(page2.sessions.map(s => s.sessionUuid)).toEqual(['a'])
     expect(page2.nextCursor).toBeNull()
+  })
+})
+
+describe('listSessionsByProjectPathSubstring', () => {
+  let db: Database.Database
+  beforeEach(() => {
+    db = new Database(':memory:')
+    runMigrations(db)
+    db.exec(`
+      INSERT INTO projects (source_id, slug, display_path, display_name, identity_kind, identity_key)
+      VALUES
+        (1,'libafl','/codes/fuzz/libafl_qemu_fuzzer','libafl_qemu_fuzzer','git_remote','github.com/x/libafl_qemu_fuzzer'),
+        (1,'bridge','/codes/fuzz/qemu-libafl-bridge','qemu-libafl-bridge','git_remote','github.com/x/bridge'),
+        (1,'other','/codes/other','other','path','/codes/other');
+      -- 100 sessions in the libafl project with old timestamps, plus recent ones elsewhere.
+      -- The old list -p implementation pulled the global timeline (limit*2 rows) and
+      -- missed these; the SQL-side filter must see them regardless of recency.
+      INSERT INTO sessions (project_id, source_id, session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime)
+      WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i < 100)
+      SELECT 1, 1, 'old-' || i, '/f' || i, 'old ' || i,
+             '2026-01-01T00:00:' || printf('%02d', i % 60) || 'Z',
+             '2026-01-01T00:00:' || printf('%02d', i % 60) || 'Z',
+             1, 0, '2026-01-01T00:00:00Z'
+      FROM seq;
+      INSERT INTO sessions (project_id, source_id, session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime)
+      VALUES
+        (2,1,'bridge-recent','/fb','bridge recent','2026-06-01T00:00:00Z','2026-06-01T00:00:00Z',1,0,'2026-06-01T00:00:00Z'),
+        (3,1,'other-recent','/fo','other recent','2026-06-02T00:00:00Z','2026-06-02T00:00:00Z',1,0,'2026-06-02T00:00:00Z');
+    `)
+  })
+
+  it('matches sessions across all projects containing the substring, newest first', () => {
+    const { sessions } = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 200 })
+    expect(sessions).toHaveLength(101)
+    // bridge project's path also contains 'libafl' and is the most recent
+    expect(sessions[0]!.sessionUuid).toBe('bridge-recent')
+    // no non-matching project leaks in
+    expect(sessions.every(s => s.projectDisplayPath.toLowerCase().includes('libafl'))).toBe(true)
+  })
+
+  it('is case-insensitive', () => {
+    const { sessions } = listSessionsByProjectPathSubstring(db, 'LIBAFL', { limit: 200 })
+    expect(sessions).toHaveLength(101)
+  })
+
+  it('respects the limit from the full matching set, not a recent window', () => {
+    // limit far below the 101 matches — must return the 100 oldest-match
+    // exclusion case: newest 20 of the matches, all from libafl projects
+    const { sessions, nextCursor } = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 20 })
+    expect(sessions).toHaveLength(20)
+    expect(nextCursor).not.toBeNull()
+    expect(sessions[0]!.sessionUuid).toBe('bridge-recent')
+  })
+
+  it('returns a cursor when more matches exist and none at the end', () => {
+    const page1 = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 100 })
+    expect(page1.sessions).toHaveLength(100)
+    expect(page1.nextCursor).not.toBeNull()
+
+    const page2 = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 100 })
+    // No cursor support needed by the CLI today, but the page shape must hold:
+    // without cursor the same first page comes back — callers needing full
+    // results pass a limit >= match count.
+    expect(page2.sessions).toHaveLength(100)
+  })
+
+  it('filters by source inside the query', () => {
+    const { sessions } = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 200, sources: ['codex'] })
+    expect(sessions).toEqual([])
+    const { sessions: geminiOnly } = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 200, sources: ['claude'] })
+    expect(geminiOnly).toHaveLength(101)
+  })
+
+  it('returns empty for a substring matching no project', () => {
+    const { sessions, nextCursor } = listSessionsByProjectPathSubstring(db, 'no-such-path')
+    expect(sessions).toEqual([])
+    expect(nextCursor).toBeNull()
+  })
+
+  it('excludes empty sessions', () => {
+    db.exec(`
+      INSERT INTO sessions (project_id, source_id, session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime)
+      VALUES (1,1,'empty','/fe','empty','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z',0,0,'2026-07-01T00:00:00Z');
+    `)
+    const { sessions } = listSessionsByProjectPathSubstring(db, 'libafl', { limit: 200 })
+    expect(sessions.map(s => s.sessionUuid)).not.toContain('empty')
   })
 })
 

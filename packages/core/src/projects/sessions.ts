@@ -78,6 +78,27 @@ export function listRecentSessionsPage(
   return executePage(db, conditions, params, 'recent', limit, sortBasis)
 }
 
+/** Sessions whose project display path contains the given substring
+ *  (case-insensitive), newest first. Unlike filtering a page of
+ *  `listRecentSessionsPage` in memory, this scans all projects — so
+ *  results are complete regardless of how recently each project was
+ *  active. Single term only; no escaping (plain substring semantics). */
+export function listSessionsByProjectPathSubstring(
+  db: Database.Database,
+  needle: string,
+  options: { limit?: number; sources?: SessionSource[] } = {},
+): SessionsPage {
+  const { limit = DEFAULT_PAGE_SIZE, sources } = options
+  const conditions = ["instr(lower(p.display_path), lower(?)) > 0", 's.message_count > 0']
+  const params: unknown[] = [needle]
+  if (sources && sources.length > 0) {
+    const placeholders = sources.map(() => '?').join(',')
+    conditions.push(`src.name IN (${placeholders})`)
+    params.push(...sources)
+  }
+  return executePage(db, conditions, params, 'recent', limit)
+}
+
 export type DirectoryCount = {
   cwd: string
   sessionCount: number

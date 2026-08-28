@@ -1,5 +1,6 @@
 import { Command } from 'commander'
-import { getDB, listRecentSessionsPage } from '@spool-lab/core'
+import { getDB, listRecentSessionsPage, listSessionsByProjectPathSubstring } from '@spool-lab/core'
+import type { SessionSource } from '@spool-lab/core'
 import { printSession } from '../format.js'
 
 const SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'grok'])
@@ -12,17 +13,21 @@ export const listCommand = new Command('list')
   .option('--json', 'Output as JSON')
   .action((opts: { limit: string; source?: string; project?: string; json?: boolean }) => {
     const db = getDB(true)
-    let sessions = listRecentSessionsPage(db, { limit: parseInt(opts.limit, 10) * 2 }).sessions
+    const limit = parseInt(opts.limit, 10)
+    const source: SessionSource | undefined = opts.source && SESSION_SOURCES.has(opts.source)
+      ? opts.source as SessionSource
+      : undefined
 
-    if (opts.source && SESSION_SOURCES.has(opts.source)) {
-      sessions = sessions.filter(s => s.source === opts.source)
-    }
-    if (opts.project) {
-      const needle = opts.project.toLowerCase()
-      sessions = sessions.filter(s => s.projectDisplayPath.toLowerCase().includes(needle))
-    }
-
-    sessions = sessions.slice(0, parseInt(opts.limit, 10))
+    const sessions = opts.project
+      ? // SQL-side filters: returns matches from the whole index, not just
+        // the most recent slice (old behavior fetched the global timeline
+        // with limit*2 rows and missed older sessions).
+        listSessionsByProjectPathSubstring(db, opts.project, {
+          limit,
+          ...(source ? { sources: [source] } : {}),
+        }).sessions
+      : listRecentSessionsPage(db, { limit }).sessions
+        .filter(s => !source || s.source === source)
 
     if (opts.json) {
       console.log(JSON.stringify(sessions, null, 2))
