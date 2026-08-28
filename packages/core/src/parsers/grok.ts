@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { closeSync, openSync, readSync } from 'node:fs'
@@ -6,7 +6,7 @@ import { StringDecoder } from 'node:string_decoder'
 import type { ParseSessionResult, ParsedSession, ParsedMessage, ToolCall as ParsedToolCall } from '../types.js'
 import { limitToolCalls, makeToolCall } from './tool-calls.js'
 
-export const GROK_INDEX_VERSION = 'grok-v3-workspace-result-strip'
+export const GROK_INDEX_VERSION = 'grok-v4-compaction-merge'
 
 // ── On-disk types ───────────────────────────────────────────────────────────
 // These mirror the ConversationItem enum in grok-build's
@@ -46,6 +46,13 @@ interface GrokSummary {
   hidden?: boolean
 }
 
+interface CompactionRequest {
+  schema_version?: number
+  created_at?: string
+  trigger?: string
+  chat_history?: ChatHistoryItem[]
+}
+
 const READ_CHUNK_SIZE = 1024 * 1024
 
 /**
@@ -82,19 +89,26 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
   const cwd = summary.info?.cwd ?? ''
 
   // ── Parse chat_history.jsonl ─────────────────────────────────────────
+  // Grok's auto-compaction rewrites chat_history.jsonl in place, replacing
+  // the earlier turns with a "This session is being continued…" synthetic
+  // message. The pre-compaction context survives in
+  // compaction_requests/<id>.json (the exact payload sent to the
+  // summarizer). Prepend those segments ahead of the live file so the
+  // full history is indexed; they're chronological segments, not
+  // supersets, so overlap only happens where compaction interrupted a
+  // turn that then re-appears in the live tail.
+  const liveItems = [...readNonEmptyLines(filePath)]
+    .map(parseChatHistoryLine)
+    .filter((item): item is ChatHistoryItem => item !== null)
+
+  const items = buildGrokTimeline(sessionDir, liveItems)
+
   const messages: ParsedMessage[] = []
   // tool_call_id → the ToolCall already attached to an assistant
   // message, so a later `tool_result` item can fill in its output.
   const pendingToolCalls = new Map<string, ParsedToolCall>()
 
-  for (const line of readNonEmptyLines(filePath)) {
-    let item: ChatHistoryItem
-    try {
-      item = JSON.parse(line) as ChatHistoryItem
-    } catch {
-      continue
-    }
-
+  for (const item of items) {
     const { type } = item
 
     if (type === 'user') {
@@ -104,6 +118,7 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
       if (item.synthetic_reason) continue
 
       const rawText = extractUserText(item.content)
+      if (!isRealUserText(rawText)) continue
       // Strip Grok's XML-like wrapper tags so the indexed text is the
       // actual user query, not the surrounding runtime scaffolding.
       const text = stripGrokWrapperTags(rawText)
@@ -241,27 +256,166 @@ function extractUserText(content: string | ContentPart[] | undefined): string {
 }
 
 /**
+ * True for user text that represents a real turn. Rejects Grok's
+ * compaction scaffolding: the summarize instruction that closes every
+ * compaction request payload and the "continued from a previous
+ * conversation" summary that opens post-compaction context. Both carry
+ * `synthetic_reason: null` in request files, so they must be filtered
+ * by text, unlike the system_reminder items which self-drop.
+ */
+function isRealUserText(rawText: string): boolean {
+  if (!rawText) return false
+  return !SUMMARIZE_INSTRUCTION_PREFIXES.some(prefix =>
+    rawText.startsWith(prefix),
+  )
+}
+
+const SUMMARIZE_INSTRUCTION_PREFIXES = [
+  'Your task is to produce a faithful, concise summary',
+  'This session is being continued from a previous conversation',
+]
+
+function parseChatHistoryLine(line: string): ChatHistoryItem | null {
+  try {
+    return JSON.parse(line) as ChatHistoryItem
+  } catch {
+    return null
+  }
+}
+
+/** Cuts a compaction request payload down to the turns that actually
+ *  happened: drops the leading preamble (system prompt, user_info,
+ *  system reminders — the latter two already self-drop downstream) and
+ *  the trailing summarize instruction. */
+function stripCompactionRequestEdges(items: ChatHistoryItem[]): ChatHistoryItem[] {
+  let start = 0
+  while (start < items.length) {
+    const it = items[start]!
+    if (it.type === 'system') { start++; continue }
+    if (it.type === 'user' && it.synthetic_reason) { start++; continue }
+    if (it.type === 'user' && !isRealUserText(extractUserText(it.content))) { start++; continue }
+    break
+  }
+  let end = items.length
+  while (end > start) {
+    const it = items[end - 1]!
+    if (it.type === 'user' && !isRealUserText(extractUserText(it.content))) { end--; continue }
+    break
+  }
+  return items.slice(start, end)
+}
+
+/** Loads all `compaction_requests/*.json` payloads for the session,
+ *  oldest first, trimmed of their preamble/summarize-instruction edges.
+ *  Returns [] when the session was never compacted. */
+function loadCompactionSegments(sessionDir: string): ChatHistoryItem[][] {
+  const dir = join(sessionDir, 'compaction_requests')
+  let files: string[]
+  try {
+    files = readdirSync(dir)
+  } catch {
+    return []
+  }
+
+  const segments: Array<{ createdAt: number, items: ChatHistoryItem[] }> = []
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue
+    let req: CompactionRequest
+    try {
+      req = JSON.parse(readFileSync(join(dir, file), 'utf8')) as CompactionRequest
+    } catch {
+      continue
+    }
+    if (!Array.isArray(req.chat_history) || req.chat_history.length === 0) continue
+    const createdAt = Date.parse(req.created_at ?? '') || 0
+    segments.push({ createdAt, items: req.chat_history })
+  }
+
+  // Chronological order by created_at. Segments are snapshots of
+  // consecutive context windows, not supersets, so they never overlap
+  // each other — only the live tail can (see buildGrokTimeline).
+  segments.sort((a, b) => a.createdAt - b.createdAt)
+  return segments.map(seg => stripCompactionRequestEdges(seg.items))
+}
+
+/**
+ * Full indexed timeline: pre-compaction segments followed by the live
+ * file. The one overlap between the last segment and the live tail is
+ * the turn compaction interrupted: its query is the last real user
+ * item of the request payload and is re-sent verbatim as the first
+ * real query of the post-compaction file (the turn's tool results are
+ * NOT replayed — live re-executes them — so they're kept from the
+ * segment). Drop the duplicated query only when the two texts match,
+ * so a repeated question later in the session is never lost.
+ */
+function buildGrokTimeline(sessionDir: string, live: ChatHistoryItem[]): ChatHistoryItem[] {
+  const segments = loadCompactionSegments(sessionDir)
+  if (segments.length === 0) return live
+
+  const lastSeg = segments[segments.length - 1]!
+  const segQueryIndex = findLastRealUserQueryIndex(lastSeg)
+  const seamIsReplayed = segQueryIndex >= 0
+    && realUserQueryText(lastSeg[segQueryIndex]!) === firstRealUserQueryText(live)
+
+  const kept: ChatHistoryItem[] = []
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!
+    const isLast = i === segments.length - 1
+    for (let j = 0; j < seg.length; j++) {
+      const item = seg[j]!
+      if (isLast && seamIsReplayed && j === segQueryIndex) continue
+      kept.push(item)
+    }
+  }
+
+  return [...kept, ...live]
+}
+
+/** Stripped text of a real (non-synthetic, non-compaction) user query. */
+function realUserQueryText(item: ChatHistoryItem): string | null {
+  if (item.type !== 'user' || item.synthetic_reason) return null
+  const text = stripGrokWrapperTags(extractUserText(item.content))
+  return text && isRealUserText(text) ? text : null
+}
+
+function findLastRealUserQueryIndex(items: ChatHistoryItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (realUserQueryText(items[i]!) !== null) return i
+  }
+  return -1
+}
+
+function firstRealUserQueryText(items: ChatHistoryItem[]): string | null {
+  for (const item of items) {
+    const text = realUserQueryText(item)
+    if (text) return text
+  }
+  return null
+}
+
+/**
  * Strip Grok Build's XML-like wrapper tags from user messages.
  *
  * Grok wraps user input in tags like `<user_info>…</user_info>` and
  * `<user_query>…</user_query>`. The `<user_query>` content is the real
- * user input; `<user_info>` is OS/shell/workspace metadata. We extract
- * the `<user_query>` body when present, otherwise strip known wrapper
- * tags from the text.
+ * user input; `<user_info>`, `<git_status>`, `<rules>`, and
+ * `<system-reminder>` are runtime scaffolding. We extract the
+ * `<user_query>` body when present, otherwise strip known wrapper tags
+ * from the text.
  */
 function stripGrokWrapperTags(text: string): string {
   if (!text) return ''
 
   // If the message contains a <user_query> block, extract just that —
   // it's the actual user question, and the surrounding <user_info> /
-  // <system-reminder> content is runtime scaffolding.
+  // <rules> / <system-reminder> content is runtime scaffolding.
   const queryMatch = text.match(/<user_query>\s*([\s\S]*?)<\/user_query>/)
   if (queryMatch) {
     return queryMatch[1]!.trim()
   }
 
   // Otherwise strip known wrapper tags but keep the inner text.
-  const wrapperTags = ['user_info', 'git_status', 'system-reminder']
+  const wrapperTags = ['user_info', 'git_status', 'rules', 'system-reminder']
   let result = text
   for (const tag of wrapperTags) {
     const re = new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, 'g')
