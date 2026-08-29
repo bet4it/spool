@@ -308,19 +308,65 @@
         }
       );
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/spool";
-        };
-        cli = {
-          type = "app";
-          program = "${self.packages.${system}.spool-cli or self.packages.${system}.cli}/bin/spool";
-        };
-        app = {
-          type = "app";
-          program = "${self.packages.${system}.app}/bin/spool-app";
-        };
-      });
+      apps = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          inherit (pkgs) lib stdenv;
+        in
+        {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/spool";
+          };
+          cli = {
+            type = "app";
+            program = "${self.packages.${system}.spool-cli or self.packages.${system}.cli}/bin/spool";
+          };
+          app = {
+            type = "app";
+            program = "${self.packages.${system}.app}/bin/spool-app";
+          };
+
+          # Run the Electron e2e suite: `nix run .#e2e -- [spec filters...]`
+          # e.g.  nix run .#e2e -- e2e/project-view-session-tree.spec.ts
+          # Sets up the NixOS toolchain PATH and Electron runtime libs, then
+          # hands off to scripts/e2e-nix.sh (rebuilds better-sqlite3 for the
+          # Electron ABI, runs Playwright, restores the Node ABI).
+          e2e = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "spool-e2e" ''
+              set -euo pipefail
+
+              # node-gyp needs make/gcc/pkg-config findable; they're
+              # prepended. The nix nodejs goes LAST: the host's node must
+              # win so the Node-ABI restore step at the end of the run
+              # matches the interpreter the rest of the repo uses (vitest,
+              # CLI). Electron itself doesn't need node on PATH.
+              export PATH="$PATH:${lib.makeBinPath (with pkgs; [ gnumake gcc pkg-config ])}"
+
+              # Locate the host node BEFORE prepending nix tools, and pass
+              # it to the script so the ABI restore uses the same
+              # interpreter as the developer's toolchain.
+              HOST_NODE="$(command -v node || true)"
+              export SPOOL_E2E_HOST_NODE="$HOST_NODE"
+              export LD_LIBRARY_PATH="${lib.makeLibraryPath (with pkgs; [
+                at-spi2-atk alsa-lib cairo cups dbus expat gdk-pixbuf
+                glib gtk3 libdrm libgbm libglvnd libx11 libxcb libxcomposite
+                libxdamage libxext libxfixes libxkbcommon libxrandr
+                libxshmfence libxtst mesa nss nspr pango systemd wayland
+                stdenv.cc.cc.lib
+              ])}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+              # The flake source in the store omits untracked files, so the
+              # script is copied into the out tree at build time.
+              script=$(mktemp -t spool-e2e-XXXXXX.sh)
+              cp ${./scripts/e2e-nix.sh} "$script"
+              chmod +x "$script"
+              exec ${pkgs.bash}/bin/bash "$script" "$@"
+            '');
+          };
+        }
+      );
     };
 }
