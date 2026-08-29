@@ -112,6 +112,53 @@ describe('listSessionsByIdentity', () => {
     }
     expect(collected).toEqual(['alpha', 'beta', 'gamma'])
   })
+
+  it('recent sort pages by roots and appends their descendants', () => {
+    db.exec(`
+      INSERT INTO sessions (
+        project_id, source_id, session_uuid, parent_session_uuid, file_path,
+        title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime
+      ) VALUES
+        (1,1,'root1','','/r1','root one','2026-05-05T00:00:00Z','2026-05-05T00:00:00Z',1,0,'2026-05-05T00:00:00Z'),
+        (1,1,'kid','root1','/k','kid','2026-05-05T00:01:00Z','2026-05-05T00:01:00Z',1,0,'2026-05-05T00:01:00Z'),
+        (1,1,'grandkid','kid','/gk','grandkid','2026-05-05T00:02:00Z','2026-05-05T00:02:00Z',1,0,'2026-05-05T00:02:00Z'),
+        (1,1,'root2','','/r2','root two','2026-05-05T00:03:00Z','2026-05-05T00:03:00Z',1,0,'2026-05-05T00:03:00Z');
+    `)
+
+    // 4 roots in the project (u1, u3, root1, root2) — limit 2 must not
+    // split the root1 family across pages; kids ride along after roots.
+    const page1 = listSessionsByIdentity(db, 'github.com/spool-lab/spool', { limit: 2 })
+    expect(page1.sessions.map(s => s.sessionUuid)).toEqual(['root2', 'root1', 'kid', 'grandkid'])
+    expect(page1.nextCursor?.sessionUuid).toBe('root1')
+
+    const page2 = listSessionsByIdentity(db, 'github.com/spool-lab/spool', {
+      limit: 2,
+      cursor: page1.nextCursor!,
+    })
+    // u1 + u2 are the next two roots in the keyset; u3 remains.
+    expect(page2.sessions.map(s => s.sessionUuid)).toEqual(['u1', 'u2'])
+  })
+
+  it('recent sort does not split a family across source-filtered pages', () => {
+    db.exec(`
+      INSERT INTO sessions (
+        project_id, source_id, session_uuid, parent_session_uuid, file_path,
+        title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime
+      ) VALUES
+        (1,1,'parent','','/fp','parent','2026-05-06T00:00:00Z','2026-05-06T00:00:00Z',1,0,'2026-05-06T00:00:00Z'),
+        (1,2,'child','parent','/fc','child','2026-05-06T00:01:00Z','2026-05-06T00:01:00Z',1,0,'2026-05-06T00:01:00Z');
+    `)
+
+    // Parent is claude (source 1), child is codex (source 2) — the source
+    // filter keeps only the parent, so the child must not appear at all
+    // (no dangling orphan row).
+    const { sessions } = listSessionsByIdentity(db, 'github.com/spool-lab/spool', {
+      sources: ['claude'],
+      limit: 10,
+    })
+    expect(sessions.map(s => s.sessionUuid)).not.toContain('child')
+    expect(sessions.map(s => s.sessionUuid)).toContain('parent')
+  })
 })
 
 describe('listRecentSessionsPage', () => {

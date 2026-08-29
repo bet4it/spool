@@ -60,6 +60,36 @@ export function listSessionsByIdentity(
     params.push(...c.params)
   }
 
+  // Only 'recent' pages get tree treatment: it's the only order where a
+  // parent and its children are adjacent enough to read as a family, and
+  // the only cursor shape the root-page + descendants query supports.
+  // The root filter is mandatory here — without it children land in the
+  // root page AND the descendants query, appearing twice.
+  if (sortOrder === 'recent') {
+    conditions.push(`(s.parent_session_uuid IS NULL OR s.parent_session_uuid = '' OR NOT EXISTS (
+      SELECT 1 FROM sessions parent
+      WHERE parent.session_uuid = s.parent_session_uuid
+        AND parent.message_count > 0
+    ))`)
+    // Children inherit identity + source filters (a filtered-out parent's
+    // family is hidden), but not the cursor or the root condition.
+    const descendantConditions: string[] = []
+    const descendantParams: unknown[] = []
+    if (sources && sources.length > 0) {
+      const srcPlaceholders = sources.map(() => '?').join(',')
+      descendantConditions.push(`src.name IN (${srcPlaceholders})`)
+      descendantParams.push(...sources)
+    }
+    return executeRecentTreePage(
+      db,
+      conditions,
+      params,
+      limit,
+      'started_at',
+      descendantConditions,
+      descendantParams,
+    )
+  }
   return executePage(db, conditions, params, sortOrder, limit)
 }
 
@@ -192,13 +222,18 @@ function executePage(
 }
 
 /** Pages by root sessions, then loads their descendants with a
- *  recursive CTE so child sessions don't consume root pagination slots. */
+ *  recursive CTE so child sessions don't consume root pagination slots.
+ *  `descendantConditions`/`descendantParams` re-apply identity and source
+ *  filters to children — they must not reference the cursor or the root
+ *  condition, which only make sense for the root page. */
 function executeRecentTreePage(
   db: Database.Database,
   conditions: string[],
   params: unknown[],
   limit: number,
   recentSortBasis: RecentSessionSortBasis = 'started_at',
+  descendantConditions: string[] = [],
+  descendantParams: unknown[] = [],
 ): SessionsPage {
   const rows = db
     .prepare(`
@@ -241,9 +276,10 @@ function executeRecentTreePage(
     ${SESSION_SELECT}
     WHERE s.session_uuid IN (SELECT session_uuid FROM descendant_ids)
       AND s.message_count > 0
+      ${descendantConditions.length > 0 ? `AND ${descendantConditions.map(c => `(${c})`).join(' AND ')}` : ''}
     ORDER BY s.started_at ASC, s.session_uuid ASC
   `)
-    .all(...roots.map((root) => root.sessionUuid)) as Array<Record<string, unknown>>
+    .all(...roots.map((root) => root.sessionUuid), ...descendantParams) as Array<Record<string, unknown>>
 
   return {
     sessions: [...roots, ...descendants.map(rowToSession)],

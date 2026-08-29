@@ -1,0 +1,4 @@
+{"timestamp":"2026-03-05T10:05:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-0000-4000-8000-000000000002","cwd":"/tmp/test-project","parent_thread_id":"aaaaaaaa-0000-4000-8000-000000000001"}}
+{"timestamp":"2026-03-05T10:05:01Z","type":"turn_context","payload":{"model":"gpt-5-codex","cwd":"/tmp/test-project"}}
+{"timestamp":"2026-03-05T10:05:10Z","type":"event_msg","payload":{"type":"user_message","message":"PROJECT_TREE_CHILD_A_CANARY: fix auth tests"}}
+{"timestamp":"2026-03-05T10:05:20Z","type":"event_msg","payload":{"type":"agent_message","message":"Auth tests fixed."}}

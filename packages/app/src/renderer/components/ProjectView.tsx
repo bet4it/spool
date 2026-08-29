@@ -8,6 +8,7 @@ import { insertSessionSorted } from '../../shared/sessionSort.js'
 import { getSessionSourceColor, getSessionSourceLabel } from '../../shared/sessionSources.js'
 import { formatRelativeDate } from '../../shared/formatDate.js'
 import { PROJECT_SORT_OPTIONS } from '../../shared/projectView.js'
+import { buildSessionForest, type SessionTreeNode } from '../lib/sessionTree.js'
 import { securityApi } from '../api/security.js'
 
 type Props = {
@@ -319,6 +320,22 @@ export default function ProjectView({
     return sessions.filter(s => cwdOf(s) === isolatedCwd)
   }, [sessions, isolatedCwd])
 
+  // Same family grouping as LibraryLanding: sessions arrive as roots +
+  // descendants from the tree-page query, and the forest re-nests them
+  // so children render indented under their parent. Children whose
+  // parent was filtered out (source filter, cwd isolation) become
+  // roots so they never vanish from the list.
+  const sessionForest = useMemo(() => buildSessionForest(visibleUnpinned), [visibleUnpinned])
+  const treeNodes = useMemo(() => {
+    const nodes = new Map<string, SessionTreeNode>()
+    const visit = (node: SessionTreeNode): void => {
+      nodes.set(node.session.sessionUuid, node)
+      for (const child of node.children) visit(child)
+    }
+    for (const root of sessionForest) visit(root)
+    return nodes
+  }, [sessionForest])
+
   const groupByDirectory = isolatedCwd === null && (directoryGroups?.length ?? 0) >= 2
 
   const looseT = t as unknown as (k: string, o?: Record<string, unknown>) => string
@@ -377,8 +394,12 @@ export default function ProjectView({
           testId: 'project-view-directory-group-header',
           dataAttr: { 'data-cwd': g.cwd },
         })
-        for (const s of g.unpinned) {
-          out.push({ kind: 'session', id: s.sessionUuid, session: s, headerId })
+        // Families stay inside one cwd (children inherit the parent's
+        // project cwd), so a per-group forest is safe; a parent filtered
+        // out of this group orphans its children into roots.
+        const groupForest = buildSessionForest(g.unpinned)
+        for (const node of groupForest) {
+          appendTreeRows(out, node, headerId)
         }
       }
     } else {
@@ -390,13 +411,13 @@ export default function ProjectView({
           testId: 'project-view-recent-header',
         })
       }
-      for (const s of visibleUnpinned) {
-        out.push({ kind: 'session', id: s.sessionUuid, session: s, headerId: 'recent' })
+      for (const node of sessionForest) {
+        appendTreeRows(out, node, 'recent')
       }
     }
     out.push({ kind: 'footer', id: 'footer', loading: loadingMore, exhausted, total: totalLoaded })
     return out
-  }, [visiblePinned, visibleUnpinned, groupByDirectory, directoryGroups, displayPath, loadingMore, exhausted, totalLoaded, pinnedLabel])
+  }, [visiblePinned, sessionForest, groupByDirectory, directoryGroups, displayPath, loadingMore, exhausted, totalLoaded, pinnedLabel])
 
   return (
     <div data-testid="project-view" className="flex flex-col h-full overflow-hidden">
@@ -561,6 +582,32 @@ function DirectoryHeaderLabel({ name, count }: { name: string; count: number }) 
       )}
     </span>
   )
+}
+
+/** Flatten a session tree under a section header: the node itself, then its
+ *  children indented one level, mirroring LibraryLanding's tree rows. */
+function appendTreeRows(
+  rows: SessionListRow[],
+  node: SessionTreeNode,
+  headerId: string,
+  depth = 0,
+  ancestorIds: string[] = [],
+): void {
+  rows.push({
+    kind: 'session',
+    id: node.session.sessionUuid,
+    session: node.session,
+    headerId,
+    treeDepth: depth,
+    treeAncestorIds: ancestorIds,
+    treeChildCount: node.children.length,
+  })
+  for (const child of node.children) {
+    appendTreeRows(rows, child, headerId, depth + 1, [
+      ...ancestorIds,
+      node.session.sessionUuid,
+    ])
+  }
 }
 
 const MAX_INLINE_CHIPS = 4

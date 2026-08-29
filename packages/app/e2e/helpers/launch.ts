@@ -61,6 +61,10 @@ export async function launchApp(opts: {
     SPOOL_GEMINI_DIR: geminiCliHome,
     GEMINI_CLI_HOME: geminiCliHome,
     SPOOL_OPENCODE_DIR: opencodeDir,
+    // Grok has no checked-in fixture base; without this the parser would
+    // read the developer's real ~/.grok/sessions during e2e runs.
+    SPOOL_GROK_DIR: join(tmpDir, 'grok', 'sessions'),
+    GROK_HOME: join(tmpDir, 'grok-home'),
     ELECTRON_DISABLE_GPU: '1',
     SPOOL_E2E_TEST: '1',
   }
