@@ -362,4 +362,201 @@ describe('parseCodexSession', () => {
       expect(messages.find(m => m.contentText === 'Second reply.')?.toolCalls).toBeUndefined()
     })
   })
+
+  describe('response_item-only sessions (Codex 0.147+)', () => {
+    // Newer Codex CLI versions (0.147+) stopped writing user_message/agent_message
+    // to event_msg and moved conversation turns to response_item/message records.
+    // The parser must extract user and assistant text from response_item so these
+    // sessions get a real title, correct message count, and accurate timestamps
+    // instead of falling back to sync time.
+
+    it('extracts user and assistant messages from response_item records', () => {
+      const fp = writeTmpSession([
+        {
+          timestamp: '2026-08-11T07:01:51Z',
+          type: 'session_meta',
+          payload: { id: '019fefa0-7aae-7203-8362-3305a74e6c92', cwd: '/tmp/project', cli_version: '0.147.0' },
+        },
+        {
+          timestamp: '2026-08-11T07:01:52Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>/tmp/project</cwd>\n</environment_context>\n你有哪些SKILL可用' }],
+          },
+        },
+        {
+          timestamp: '2026-08-11T07:01:58Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: '当前我有以下 SKILL 可用：imagegen' }],
+          },
+        },
+      ])
+
+      const parsed = parseCodexSession(fp)
+      expect(parsed?.title).toBe('你有哪些SKILL可用')
+      expect(parsed?.messages).toHaveLength(2)
+      expect(parsed?.messages[0].role).toBe('user')
+      expect(parsed?.messages[0].contentText).toBe('你有哪些SKILL可用')
+      expect(parsed?.messages[1].role).toBe('assistant')
+      expect(parsed?.startedAt).toBe('2026-08-11T07:01:52Z')
+    })
+
+    it('strips <environment_context> from response_item user messages', () => {
+      const fp = writeTmpSession([
+        {
+          timestamp: '2026-08-11T07:01:51Z',
+          type: 'session_meta',
+          payload: { id: 'test-strip-env', cwd: '/tmp/project' },
+        },
+        {
+          timestamp: '2026-08-11T07:01:52Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>/tmp</cwd>\n  <shell>bash</shell>\n</environment_context>\nFix the bug in main.ts' }],
+          },
+        },
+        {
+          timestamp: '2026-08-11T07:01:53Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'I will fix it.' }],
+          },
+        },
+      ])
+
+      const parsed = parseCodexSession(fp)
+      expect(parsed?.title).toBe('Fix the bug in main.ts')
+      expect(parsed?.messages[0].contentText).toBe('Fix the bug in main.ts')
+    })
+
+    it('does not duplicate messages in dual-write files (event_msg + response_item)', () => {
+      // Codex 0.150+ writes the same turn to both event_msg and response_item.
+      // The parser must deduplicate so message_count and the UI list stay correct.
+      const fp = writeTmpSession([
+        {
+          timestamp: '2026-08-28T13:07:18Z',
+          type: 'session_meta',
+          payload: { id: 'test-dual', cwd: '/tmp/project', cli_version: '0.150.1' },
+        },
+        {
+          timestamp: '2026-08-28T13:07:18Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'What is 2+2?' },
+        },
+        {
+          timestamp: '2026-08-28T13:07:18Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>\nWhat is 2+2?' }],
+          },
+        },
+        {
+          timestamp: '2026-08-28T13:07:19Z',
+          type: 'event_msg',
+          payload: { type: 'agent_message', message: 'The answer is 4.' },
+        },
+        {
+          timestamp: '2026-08-28T13:07:19Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'The answer is 4.' }],
+          },
+        },
+      ])
+
+      const parsed = parseCodexSession(fp)
+      const primary = parsed?.messages.filter(m => !m.isSidechain) ?? []
+      expect(primary).toHaveLength(2)
+      expect(primary[0].role).toBe('user')
+      expect(primary[0].contentText).toBe('What is 2+2?')
+      expect(primary[1].role).toBe('assistant')
+      expect(primary[1].contentText).toBe('The answer is 4.')
+    })
+
+    it('falls back to filename timestamp when no message timestamps exist', () => {
+      // A session with only response_item records and no event_msg at all has
+      // no parseable timestamps in the message stream. The parser should fall
+      // back to the timestamp embedded in the rollout filename.
+      const fp = writeTmpSession([
+        {
+          timestamp: '2026-08-11T07:01:51Z',
+          type: 'session_meta',
+          payload: { id: 'test-fallback-ts', cwd: '/tmp/project' },
+        },
+        {
+          timestamp: '2026-08-11T07:01:52Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Hello' }],
+          },
+        },
+      ])
+      // Override the filename to a known timestamp
+      const dir = join(tmpdir(), 'spool-codex-fb-ts-' + Date.now())
+      const renamed = join(dir, 'rollout-2026-08-11T15-03-35-019fefa2-4060-7312-94d2-569e48b239fb.jsonl')
+      const { mkdirSync, renameSync } = require('node:fs')
+      mkdirSync(dir, { recursive: true })
+      renameSync(fp, renamed)
+
+      const parsed = parseCodexSession(renamed)
+      expect(parsed?.startedAt).toBe('2026-08-11T07:01:52Z')
+    })
+
+    it('skips developer role messages in response_item', () => {
+      const fp = writeTmpSession([
+        {
+          timestamp: '2026-08-11T07:01:51Z',
+          type: 'session_meta',
+          payload: { id: 'test-skip-dev', cwd: '/tmp/project' },
+        },
+        {
+          timestamp: '2026-08-11T07:01:52Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'developer',
+            content: [{ type: 'input_text', text: 'You are a helpful assistant.' }],
+          },
+        },
+        {
+          timestamp: '2026-08-11T07:01:53Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Hello' }],
+          },
+        },
+        {
+          timestamp: '2026-08-11T07:01:54Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'Hi there!' }],
+          },
+        },
+      ])
+
+      const parsed = parseCodexSession(fp)
+      const primary = parsed?.messages.filter(m => !m.isSidechain) ?? []
+      expect(primary).toHaveLength(2)
+      expect(primary.find(m => m.role === 'developer')).toBeUndefined()
+    })
+  })
 })

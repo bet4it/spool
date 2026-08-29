@@ -11,9 +11,44 @@ interface CodexRecord {
   payload?: Record<string, unknown>
 }
 
-export const CODEX_INDEX_VERSION = 'codex-v11-parent-session-tree'
+export const CODEX_INDEX_VERSION = 'codex-v12-response-item-messages'
 
 const READ_CHUNK_SIZE = 1024 * 1024
+
+// Matches the timestamp portion of a Codex rollout filename:
+// rollout-2026-08-11T15-03-35-{uuid}.jsonl → 2026-08-11T15:03:35
+const FILENAME_TIMESTAMP_RE =
+  /^rollout-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-/
+
+// Codex injects environment metadata into the first user_message of each
+// session. The <environment_context> block carries cwd/shell/date; the
+// optional <goal_context> block carries multi-agent task framing. Neither
+// is user-authored text, so we strip both before deriving a title or
+// indexing for FTS — otherwise every session's title would be
+// "<environment_context>".
+function stripCodexEnvironmentContext(text: string): string {
+  let result = text
+  for (const tag of ['<environment_context>', '<goal_context>']) {
+    let open = result.indexOf(tag)
+    while (open !== -1) {
+      const close = result.indexOf(`</${tag.slice(1)}`, open + tag.length)
+      if (close === -1) break
+      result = result.slice(0, open) + result.slice(close + `</${tag.slice(1)}`.length)
+      open = result.indexOf(tag)
+    }
+  }
+  return result.trim()
+}
+
+// Fall back to the filename timestamp when the session has no parseable
+// messages at all (newer Codex CLIs may omit event_msg entirely, leaving
+// only response_item records). Without this, startedAt/endedAt would be
+// new Date() at sync time, which is wrong.
+function timestampFromFilename(filePath: string): string | null {
+  const m = basename(filePath).match(FILENAME_TIMESTAMP_RE)
+  if (!m) return null
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`
+}
 
 const INTERNAL_CODEX_SESSION_MARKERS = [
   'The following is the Codex agent history whose request action you are assessing',
@@ -183,11 +218,14 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
       }
 
       const role = payload['role'] as string | undefined
-      if (role === 'assistant') {
+      // Skip developer/instruction messages — they carry system
+      // prompts and tool permission framing, not user content.
+      if (role === 'developer') continue
+      if (role === 'assistant' || role === 'user') {
         const content = payload['content']
         if (Array.isArray(content)) {
           const text = (content as Array<{ type?: string; text?: string }>)
-            .filter(c => c.type === 'output_text' || c.type === 'text')
+            .filter(c => c.type === 'output_text' || c.type === 'text' || c.type === 'input_text')
             .map(c => c.text ?? '')
             .join('\n')
             .trim()
@@ -195,12 +233,19 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
             isInternalAssessmentSession = true
             continue
           }
-          if (text) {
+
+          // For user messages, strip the <environment_context> and
+          // <goal_context> envelopes that newer Codex injects into
+          // the first turn, so titles and FTS reflect real queries.
+          const cleaned = role === 'user'
+            ? stripCodexEnvironmentContext(text)
+            : text
+          if (cleaned) {
             responseMessages.push({
               uuid: `codex-${sessionUuid}-ri-${responseMessages.length}`,
               parentUuid: null,
-              role: 'assistant',
-              contentText: text,
+              role,
+              contentText: cleaned,
               timestamp,
               isSidechain: false,
               toolNames: [],
@@ -222,6 +267,8 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
     const toolCalls = limitToolCalls(pendingToolCalls.flatMap(expandCodexExec))
     const thinking = normalizeThinking(pendingThinking.join('\n\n'))
     const lastTimestamp = eventMessages[eventMessages.length - 1]?.timestamp
+      ?? responseMessages[responseMessages.length - 1]?.timestamp
+      ?? timestampFromFilename(filePath)
       ?? new Date().toISOString()
     eventMessages.push({
       uuid: `codex-${sessionUuid}-a-${eventMessages.length}`,
@@ -237,20 +284,41 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
     })
   }
 
-  // Strategy: use event_msg for UI (concise); supplement with response_items for
-  // FTS richness when event_msgs are sparse. We index both but deduplicate.
-  //
-  // If we have event_msgs, use them as the primary message list.
-  // response_items are added as system-level messages for FTS indexing only.
+  // Strategy: merge event_msg and response_item messages, then deduplicate
+  // by (role, contentText) to avoid doubling when both record streams carry
+  // the same turn (dual-write in Codex 0.150+). When only response_item has
+  // the turns (0.147–0.149, or old 0.0.0 files with no EV user_message),
+  // those become the primary list instead of sidechain.
+  const hasEventUserMessages = eventMessages.some(m => m.role === 'user')
   let messages: ParsedMessage[]
-  if (eventMessages.length > 0) {
+  if (hasEventUserMessages) {
+    // Dual-write file: EV has the user turns. Use EV as primary, add RI
+    // as sidechain for FTS richness (deduped by content to avoid inflation).
     messages = [...eventMessages]
-    // Add response_items as sidechain messages for FTS richness
+    const seenText = new Set(eventMessages.map(m => `${m.role}:${m.contentText}`))
     for (const rm of responseMessages) {
-      messages.push({ ...rm, isSidechain: true, seq: messages.length })
+      const key = `${rm.role}:${rm.contentText}`
+      if (!seenText.has(key)) {
+        seenText.add(key)
+        messages.push({ ...rm, isSidechain: true, seq: messages.length })
+      }
     }
   } else {
-    messages = responseMessages
+    // No EV user messages — response_item is the only source of user turns.
+    // Use RI as primary; also include EV agent messages (some old files have
+    // EV agent_message but no EV user_message) deduped against RI.
+    messages = [...responseMessages]
+    const seenText = new Set(responseMessages.map(m => `${m.role}:${m.contentText}`))
+    for (const em of eventMessages) {
+      if (em.contentText === '' && em.toolNames.length === 0) continue
+      const key = `${em.role}:${em.contentText}`
+      if (!seenText.has(key)) {
+        seenText.add(key)
+        messages.push({ ...em, seq: messages.length })
+      }
+    }
+    // Re-sort by timestamp to interleave EV and RI correctly
+    messages.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
   }
 
   if (isInternalAssessmentSession) return { kind: 'filtered' }
@@ -273,8 +341,8 @@ export function loadCodexSession(filePath: string): ParseSessionResult {
       title,
       cwd,
       model,
-      startedAt: timestamps[0] ?? new Date().toISOString(),
-      endedAt: timestamps[timestamps.length - 1] ?? new Date().toISOString(),
+      startedAt: timestamps[0] ?? timestampFromFilename(filePath) ?? new Date().toISOString(),
+      endedAt: timestamps[timestamps.length - 1] ?? timestampFromFilename(filePath) ?? new Date().toISOString(),
       messages,
     },
   }
