@@ -1,0 +1,24 @@
+{
+  "info": {
+    "id": "01a03000-0000-7000-8000-000000000002",
+    "cwd": "/tmp/test-project"
+  },
+  "session_summary": "GROK_TREE_CHILD_A_CANARY: draft the API reference",
+  "created_at": "2026-01-15T10:00:00.000000000Z",
+  "updated_at": "2026-01-15T10:20:00.000000000Z",
+  "last_active_at": "2026-01-15T10:20:00.000000000Z",
+  "num_messages": 4,
+  "num_chat_messages": 2,
+  "current_model_id": "grok-4.5",
+  "parent_session_id": "01a03000-0000-7000-8000-000000000001",
+  "forked_at": "2026-01-15T10:00:00.000000000Z",
+  "next_trace_turn": 0,
+  "chat_format_version": 1,
+  "session_kind": "fork",
+  "fork_context_source": "forked",
+  "fork_parent_prompt_id": "310c5983-5aeb-4373-92c2-189e509c5d04",
+  "grok_home": "/tmp/grok-home",
+  "generated_title": "GROK_TREE_CHILD_A_CANARY: draft the API reference",
+  "agent_name": "general-purpose",
+  "sandbox_profile": "workspace"
+}

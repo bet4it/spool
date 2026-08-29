@@ -159,6 +159,25 @@ describe('listSessionsByIdentity', () => {
     expect(sessions.map(s => s.sessionUuid)).not.toContain('child')
     expect(sessions.map(s => s.sessionUuid)).toContain('parent')
   })
+
+  it('nests grok fork/subagent-resume children under their parent', () => {
+    const grokSourceId = (db.prepare("SELECT id FROM sources WHERE name = 'grok'").get() as { id: number }).id
+    db.exec(`
+      INSERT INTO sessions (
+        project_id, source_id, session_uuid, parent_session_uuid, file_path,
+        title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime
+      ) VALUES
+        (1,${grokSourceId},'groot',NULL,'/gr','grok parent','2026-05-07T00:00:00Z','2026-05-07T00:00:00Z',1,0,'2026-05-07T00:00:00Z'),
+        (1,${grokSourceId},'gkid1','groot','/gk1','grok fork','2026-05-07T00:01:00Z','2026-05-07T00:01:00Z',1,0,'2026-05-07T00:01:00Z'),
+        (1,${grokSourceId},'gkid2','groot','/gk2','grok subagent resume','2026-05-07T00:02:00Z','2026-05-07T00:02:00Z',1,0,'2026-05-07T00:02:00Z');
+    `)
+
+    // Grok children ride along with the root page — no separate slots,
+    // no duplicates — the same tree contract codex families follow.
+    const page = listSessionsByIdentity(db, 'github.com/spool-lab/spool', { limit: 1 })
+    expect(page.sessions.map(s => s.sessionUuid)).toEqual(['groot', 'gkid1', 'gkid2'])
+    expect(page.nextCursor?.sessionUuid).toBe('groot')
+  })
 })
 
 describe('listRecentSessionsPage', () => {

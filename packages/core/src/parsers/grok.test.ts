@@ -258,6 +258,81 @@ describe('parseGrokSession', () => {
     expect(parsed!.messages[0]!.contentText).toBe('plain string question')
   })
 
+  it('preserves parent_session_id from forked/subagent-resumed sessions', () => {
+    const fp = makeSessionDir({
+      summary: { parent_session_id: '01a024b8-530a-7e01-815c-50f9fd631e8f', session_kind: 'fork' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'continue the work' }] },
+        { type: 'assistant', content: 'Continuing.' },
+      ],
+    })
+
+    expect(parseGrokSession(fp)?.parentSessionUuid).toBe('01a024b8-530a-7e01-815c-50f9fd631e8f')
+  })
+
+  it('treats fresh sessions and empty parent_session_id as roots', () => {
+    const fresh = makeSessionDir({
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'start something new' }] },
+        { type: 'assistant', content: 'Started.' },
+      ],
+    })
+    expect(parseGrokSession(fresh)?.parentSessionUuid).toBeNull()
+
+    // grok-build writes absent optional fields, not empty strings, but
+    // a registry replica could round-trip one; '' must not claim a parent.
+    const emptyParent = makeSessionDir({
+      summary: { parent_session_id: '' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'also new' }] },
+        { type: 'assistant', content: 'Ok.' },
+      ],
+    })
+    expect(parseGrokSession(emptyParent)?.parentSessionUuid).toBeNull()
+  })
+
+  it('still filters hidden subagent sessions even when parent_session_id is set', () => {
+    const fp = makeSessionDir({
+      summary: { parent_session_id: '01a024b8-530a-7e01-815c-50f9fd631e8f', session_kind: 'subagent', hidden: true },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'task' }] },
+        { type: 'assistant', content: 'Working.' },
+      ],
+    })
+
+    expect(parseGrokSession(fp)).toBeNull()
+    expect(loadGrokSession(fp).kind).toBe('filtered')
+  })
+
+  it('filters subagent scratchpads by session_kind even without an explicit hidden flag', () => {
+    // grok-build's is_hidden(): subagent* kinds default to hidden when
+    // `hidden` is unset — Summary::is_hidden's default.
+    const kinds = ['subagent', 'subagent_fork', 'subagent_resume']
+    for (const session_kind of kinds) {
+      const fp = makeSessionDir({
+        summary: { session_kind },
+        chatHistory: [
+          { type: 'user', content: [{ type: 'text', text: 'task' }] },
+          { type: 'assistant', content: 'Working.' },
+        ],
+      })
+      expect(loadGrokSession(fp).kind).toBe('filtered')
+    }
+  })
+
+  it('keeps fork and worktree sessions visible by session_kind', () => {
+    for (const session_kind of ['fork', 'worktree']) {
+      const fp = makeSessionDir({
+        summary: { session_kind, parent_session_id: '01a024b8-530a-7e01-815c-50f9fd631e8f' },
+        chatHistory: [
+          { type: 'user', content: [{ type: 'text', text: 'continue' }] },
+          { type: 'assistant', content: 'Ok.' },
+        ],
+      })
+      expect(parseGrokSession(fp)).not.toBeNull()
+    }
+  })
+
   it('handles missing summary.json gracefully', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spool-grok-nosum-'))
     const sessionDir = join(dir, 'abc123')

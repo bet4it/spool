@@ -44,12 +44,17 @@ export async function launchApp(opts: {
   // ordering/counts and stalling first-launch sync (the "30s timeout"
   // flake that only reproduced on machines with real OpenCode data).
   const opencodeDir = join(tmpDir, 'opencode')
+  // Grok sessions live at {grok_home}/sessions/{encoded_cwd}/{session_id}/,
+  // and launchApp points both SPOOL_GROK_DIR and GROK_HOME under tmpDir.
+  const grokHome = join(tmpDir, 'grok-home')
+  const grokSessionsDir = join(grokHome, 'sessions')
   cpSync(join(FIXTURES_DIR, 'claude-projects'), claudeDir, { recursive: true })
   cpSync(join(FIXTURES_DIR, 'codex-sessions'), codexDir, { recursive: true })
   cpSync(join(FIXTURES_DIR, 'gemini-cli-home'), geminiCliHome, { recursive: true })
   mkdirSync(opencodeDir, { recursive: true })
+  cpSync(join(FIXTURES_DIR, 'grok-home'), grokHome, { recursive: true })
 
-  opts.extraFixtures?.({ claudeDir, codexDir, geminiCliHome, opencodeDir })
+  opts.extraFixtures?.({ claudeDir, codexDir, geminiCliHome, opencodeDir, grokSessionsDir })
 
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
@@ -61,10 +66,11 @@ export async function launchApp(opts: {
     SPOOL_GEMINI_DIR: geminiCliHome,
     GEMINI_CLI_HOME: geminiCliHome,
     SPOOL_OPENCODE_DIR: opencodeDir,
-    // Grok has no checked-in fixture base; without this the parser would
-    // read the developer's real ~/.grok/sessions during e2e runs.
-    SPOOL_GROK_DIR: join(tmpDir, 'grok', 'sessions'),
-    GROK_HOME: join(tmpDir, 'grok-home'),
+    // Grok: fixture tree is copied to {tmp}/grok-home above; both vars
+    // point there so neither the sessions dir nor the grok home fallback
+    // can read the developer's real ~/.grok during e2e runs.
+    SPOOL_GROK_DIR: grokSessionsDir,
+    GROK_HOME: grokHome,
     ELECTRON_DISABLE_GPU: '1',
     SPOOL_E2E_TEST: '1',
   }

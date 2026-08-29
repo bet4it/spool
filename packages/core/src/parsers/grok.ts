@@ -6,7 +6,7 @@ import { StringDecoder } from 'node:string_decoder'
 import type { ParseSessionResult, ParsedSession, ParsedMessage, ToolCall as ParsedToolCall } from '../types.js'
 import { limitToolCalls, makeToolCall } from './tool-calls.js'
 
-export const GROK_INDEX_VERSION = 'grok-v4-compaction-merge'
+export const GROK_INDEX_VERSION = 'grok-v5-parent-session-tree'
 
 // ── On-disk types ───────────────────────────────────────────────────────────
 // These mirror the ConversationItem enum in grok-build's
@@ -44,6 +44,13 @@ interface GrokSummary {
   session_summary?: string
   agent_name?: string
   hidden?: boolean
+  /** Parent session for forks/resumes (`Summary.parent_session_id` in
+   *  grok-build). Written for `fork`, `worktree`, and `subagent_*`
+   *  session kinds; absent on fresh sessions. */
+  parent_session_id?: string | null
+  /** What created this session (`Summary.session_kind`): "fork",
+   *  "worktree", "subagent", "subagent_fork", "subagent_resume", etc. */
+  session_kind?: string | null
 }
 
 interface CompactionRequest {
@@ -82,11 +89,23 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
     // Malformed or missing summary — fall back to defaults from file path.
   }
 
-  // Skip hidden sessions (worktree forks, subagent scratchpads).
-  if (summary.hidden === true) return { kind: 'filtered' }
+  // Skip hidden sessions (worktree forks, subagent scratchpads). Matches
+  // grok-build's Summary::is_hidden(): an explicit override wins, and
+  // otherwise subagent* kinds are hidden by default.
+  if (summary.hidden ?? (summary.session_kind ?? '').startsWith('subagent')) {
+    return { kind: 'filtered' }
+  }
 
   const sessionUuid = summary.info?.id ?? basename(sessionDir)
   const cwd = summary.info?.cwd ?? ''
+  // Groups forks/subagent resumes under their source session. Only
+  // trust non-empty values: grok-build's remote-registry sessions can
+  // stamp placeholder IDs for parents that never existed locally, and
+  // an empty string would otherwise claim a '' parent.
+  const parentSessionUuid =
+    typeof summary.parent_session_id === 'string' && summary.parent_session_id.length > 0
+      ? summary.parent_session_id
+      : null
 
   // ── Parse chat_history.jsonl ─────────────────────────────────────────
   // Grok's auto-compaction rewrites chat_history.jsonl in place, replacing
@@ -234,6 +253,7 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
     session: {
       source: 'grok',
       sessionUuid,
+      parentSessionUuid,
       filePath,
       title,
       cwd,
