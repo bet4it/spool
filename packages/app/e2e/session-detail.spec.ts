@@ -61,7 +61,10 @@ test('session detail shows Pin, action menu (Copy ID + Copy command), Resume', a
   await window.locator('[data-testid="session-row"]').first().click()
   await expect(window.locator('[data-testid="session-detail"]')).toBeVisible({ timeout: 5000 })
 
-  await expect(window.locator('[data-testid="pin-button"]')).toBeVisible()
+  // The session-detail-scoped selector matters: the project list
+  // behind the detail view stays mounted (hidden) while a session is
+  // open, so unscoped pin-button queries match the list rows too.
+  await expect(window.locator('[data-testid="session-detail"] [data-testid="pin-button"]')).toBeVisible()
   await expect(window.locator('[data-testid="detail-resume"]')).toBeVisible()
 
   await window.locator('[data-testid="detail-actions-menu"] button').first().click()

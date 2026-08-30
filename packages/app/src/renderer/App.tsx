@@ -374,6 +374,24 @@ export default function App() {
   const isSharesView = view === 'shares'
   const isSecurityView = view === 'security'
   const isShareEditorView = view === 'share-editor'
+  // While a session is open, the surface it was opened from stays
+  // mounted (hidden) so Back restores its scroll position and loaded
+  // pages instead of resetting to the top of a fresh first page. The
+  // regular flags above all flip the moment selectedSession is set,
+  // so the surface selection is frozen against the recorded return
+  // view for the duration of the session.
+  const sessionOpen = view === 'session' && selectedSession !== null
+  // Mirror of the sessionReturnView state (declared later, next to
+  // its setter) kept current at open time so the surface* flags can
+  // read the frozen return view during the same render that opens a
+  // session — before the state update commits.
+  const sessionReturnViewRef = useRef<View>('search')
+  const surfaceView = sessionOpen ? sessionReturnViewRef.current : view
+  const surfaceShares = surfaceView === 'shares'
+  const surfaceSecurity = surfaceView === 'security'
+  const surfaceProject = activeProjectKey !== null && surfaceView === 'search' && !query.trim()
+  const surfaceResults = surfaceView === 'search' && !!query.trim()
+  const surfaceHome = homeMode && surfaceView === 'search' && !surfaceProject && !surfaceResults && !surfaceShares && !surfaceSecurity
 
   useEffect(() => {
     loadThemeEditorState()
@@ -694,12 +712,13 @@ export default function App() {
   const [sessionReturnView, setSessionReturnView] = useState<View>('search')
 
   const handleOpenSession = useCallback((uuid: string, messageId?: number) => {
-    setSessionReturnView(view === 'session' ? sessionReturnView : view)
+    const next = view === 'session' ? sessionReturnViewRef.current : view
+    sessionReturnViewRef.current = next
+    setSessionReturnView(next)
     setSelectedSession(uuid)
     setTargetMessageId(messageId ?? null)
     setView('session')
-  }, [view, sessionReturnView])
-
+  }, [view])
   const handleBack = useCallback(() => {
     setView(sessionReturnView)
     setSelectedSession(null)
@@ -972,20 +991,29 @@ export default function App() {
         )}
         <div className="relative flex flex-col flex-1 min-w-0">
           <div className="flex flex-col flex-1 min-h-0 relative">
-        {isSharesView ? (
+        {/* While a session is open, the surface it was opened from stays
+            mounted but hidden, so Back restores its scroll position and
+            pagination instead of resetting to the top of a freshly
+            fetched first page. `inert` keeps the hidden surface out of
+            the a11y tree and focus order while SessionDetail is showing. */}
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${sessionOpen ? 'invisible' : ''}`}
+          {...(sessionOpen ? { inert: true } : {})}
+        >
+        {surfaceShares ? (
           <SharesPage
             onOpenDraft={handleOpenDraft}
             onOpenDraftById={handleOpenDraftById}
             onImportSpool={handleImportSpoolFile}
             onStartNewDraft={handleStartShareFromUuid}
           />
-        ) : isSecurityView ? (
+        ) : surfaceSecurity ? (
           <SecurityPage
             onOpenSession={handleOpenSession}
             onOpenSettings={() => { setSettingsTab('security'); setShowSettings(true) }}
             onShareSession={handleStartShareFromUuid}
           />
-        ) : isHomeMode ? (
+        ) : surfaceHome ? (
           <LibraryLanding
             onSelectProject={(key) => {
               setActiveProjectKey(key)
@@ -1003,7 +1031,7 @@ export default function App() {
           />
         ) : (
           <>
-            {!showProjectView && view !== 'session' && !!query.trim() && (
+            {!sessionOpen && !!query.trim() && (
               <div className="flex items-center gap-3 px-6 pt-1.5 pb-3 flex-none">
                 <button
                   type="button"
@@ -1036,15 +1064,7 @@ export default function App() {
             )}
 
             <div className="flex-1 min-h-0 overflow-hidden">
-              {view === 'session' && selectedSession ? (
-                <SessionDetail
-                  sessionUuid={selectedSession}
-                  targetMessageId={targetMessageId}
-                  onCopySessionId={handleCopySessionId}
-                  onBack={handleBack}
-                  onShare={handleStartShareFromSession}
-                />
-              ) : showProjectView && activeProjectKey ? (
+              {surfaceProject && activeProjectKey ? (
                 <ProjectView
                   identityKey={activeProjectKey}
                   sortOrder={projectSortOrder}
@@ -1053,7 +1073,7 @@ export default function App() {
                   onCopySessionId={handleCopySessionId}
                   onShare={handleStartShareFromUuid}
                 />
-              ) : (
+              ) : surfaceResults ? (
                 <div className="h-full flex flex-col overflow-hidden">
                   {searchMode === 'ai' && (aiAnswer || aiStreaming || aiError) && (
                     <AiAnswerCard
@@ -1101,10 +1121,20 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
             </div>
           </>
         )}
+        </div>
+        {sessionOpen ? (
+          <SessionDetail
+            sessionUuid={selectedSession}
+            targetMessageId={targetMessageId}
+            onCopySessionId={handleCopySessionId}
+            onBack={handleBack}
+            onShare={handleStartShareFromSession}
+          />
+        ) : null}
           </div>
         </div>
       </div>
