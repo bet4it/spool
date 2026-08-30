@@ -6,7 +6,10 @@ import { StringDecoder } from 'node:string_decoder'
 import type { ParseSessionResult, ParsedSession, ParsedMessage, ToolCall as ParsedToolCall } from '../types.js'
 import { limitToolCalls, makeToolCall } from './tool-calls.js'
 
-export const GROK_INDEX_VERSION = 'grok-v5-parent-session-tree'
+// v6: subagent* sessions are no longer dropped wholesale — they resolve
+// their parent via the parent session's subagents/<id>/meta.json and fold
+// under it, so a re-index is needed to recover already-filtered sessions.
+export const GROK_INDEX_VERSION = 'grok-v6-subagent-tree'
 
 // ── On-disk types ───────────────────────────────────────────────────────────
 // These mirror the ConversationItem enum in grok-build's
@@ -53,6 +56,14 @@ interface GrokSummary {
   session_kind?: string | null
 }
 
+/** `SubagentSessionMetadata` in grok-build's persistence.rs. */
+interface GrokSubagentMeta {
+  child_session_id?: string
+  parent_session_id?: string
+  description?: string
+  status?: string
+}
+
 interface CompactionRequest {
   schema_version?: number
   created_at?: string
@@ -89,23 +100,33 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
     // Malformed or missing summary — fall back to defaults from file path.
   }
 
-  // Skip hidden sessions (worktree forks, subagent scratchpads). Matches
-  // grok-build's Summary::is_hidden(): an explicit override wins, and
-  // otherwise subagent* kinds are hidden by default.
-  if (summary.hidden ?? (summary.session_kind ?? '').startsWith('subagent')) {
+  // Skip explicitly hidden sessions. Unlike grok-build's own listing,
+  // subagent* kinds stay indexable: Spool folds them under their parent
+  // session instead of hiding them.
+  if (summary.hidden === true) {
     return { kind: 'filtered' }
   }
 
   const sessionUuid = summary.info?.id ?? basename(sessionDir)
   const cwd = summary.info?.cwd ?? ''
-  // Groups forks/subagent resumes under their source session. Only
-  // trust non-empty values: grok-build's remote-registry sessions can
-  // stamp placeholder IDs for parents that never existed locally, and
-  // an empty string would otherwise claim a '' parent.
-  const parentSessionUuid =
+  const sessionKind = summary.session_kind ?? ''
+
+  // Groups forks, worktrees, and subagent sessions under their source
+  // session. Only trust non-empty values: grok-build's remote-registry
+  // sessions can stamp placeholder IDs for parents that never existed
+  // locally, and an empty string would otherwise claim a '' parent.
+  let parentSessionUuid =
     typeof summary.parent_session_id === 'string' && summary.parent_session_id.length > 0
       ? summary.parent_session_id
       : null
+
+  // Plain `subagent` sessions carry no parent_session_id — grok-build
+  // records the linkage only in the parent's
+  // subagents/<child_id>/meta.json. Read it from there so these children
+  // fold under their parent like forks do.
+  if (!parentSessionUuid && sessionKind.startsWith('subagent')) {
+    parentSessionUuid = readSubagentParentId(sessionDir, sessionUuid)
+  }
 
   // ── Parse chat_history.jsonl ─────────────────────────────────────────
   // Grok's auto-compaction rewrites chat_history.jsonl in place, replacing
@@ -263,6 +284,51 @@ export function loadGrokSession(filePath: string): ParseSessionResult {
       messages,
     },
   }
+}
+
+/**
+ * Resolve a plain `subagent` session's parent by reading its
+ * `subagents/<session_id>/meta.json` under the session's encoded-cwd
+ * sibling directories. Grok-build writes the child→parent linkage only
+ * there (the child's own summary.json has no parent_session_id).
+ *
+ * `<grokHome>/sessions/<encoded>/<parent>/subagents/<id>/meta.json`:
+ * ```json
+ * { "child_session_id": "...", "parent_session_id": "...", ... }
+ * ```
+ */
+function readSubagentParentId(sessionDir: string, sessionUuid: string): string | null {
+  const sessionsRoot = dirname(dirname(sessionDir)) // …/sessions
+  let encodedDirs: string[]
+  try {
+    encodedDirs = readdirSync(sessionsRoot)
+  } catch {
+    return null
+  }
+  // The meta.json lives under the parent session's own directory, one
+  // level below the encoded-cwd dir — scan both levels.
+  for (const encoded of encodedDirs) {
+    const projectDir = join(sessionsRoot, encoded)
+    let sessionDirs: string[]
+    try {
+      sessionDirs = readdirSync(projectDir)
+    } catch {
+      continue
+    }
+    for (const dir of sessionDirs) {
+      let meta: GrokSubagentMeta
+      try {
+        meta = JSON.parse(
+          readFileSync(join(projectDir, dir, 'subagents', sessionUuid, 'meta.json'), 'utf8'),
+        ) as GrokSubagentMeta
+      } catch {
+        continue
+      }
+      const parent = meta.parent_session_id
+      if (typeof parent === 'string' && parent.length > 0) return parent
+    }
+  }
+  return null
 }
 
 function extractUserText(content: string | ContentPart[] | undefined): string {

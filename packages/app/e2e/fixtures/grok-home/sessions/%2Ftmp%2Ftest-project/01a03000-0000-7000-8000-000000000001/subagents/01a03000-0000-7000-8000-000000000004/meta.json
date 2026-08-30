@@ -1,0 +1,17 @@
+{
+  "subagent_id": "01a03000-0000-7000-8000-000000000004",
+  "parent_session_id": "01a03000-0000-7000-8000-000000000001",
+  "child_session_id": "01a03000-0000-7000-8000-000000000004",
+  "subagent_type": "explore",
+  "description": "explore the docs tree",
+  "prompt": "Explore the docs directory and report its structure.",
+  "status": "completed",
+  "started_at": "2026-01-15T09:05:00Z",
+  "completed_at": "2026-01-15T09:10:00Z",
+  "duration_ms": 300000,
+  "tool_calls": 3,
+  "turns": 1,
+  "effective_context_source": "new",
+  "child_cwd": "/tmp/test-project",
+  "effective_model_id": "grok-4.5"
+}

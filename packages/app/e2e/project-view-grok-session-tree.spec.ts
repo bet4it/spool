@@ -15,7 +15,7 @@ test.afterAll(async () => {
 const PARENT = '01a03000-0000-7000-8000-000000000001'
 const CHILD_A = '01a03000-0000-7000-8000-000000000002'
 const CHILD_B = '01a03000-0000-7000-8000-000000000003'
-const HIDDEN_SUBAGENT = '01a03000-0000-7000-8000-000000000004'
+const SUBAGENT = '01a03000-0000-7000-8000-000000000004'
 
 async function openTestProject(window: import('@playwright/test').Page) {
   // The grok fixture sessions live in /tmp/test-project — same project as
@@ -34,35 +34,38 @@ test('project view nests grok child sessions under their parent', async () => {
   await waitForSync(window)
   await openTestProject(window)
 
-  // Parent row renders with a tree toggle and its child count (two
-  // visible children; the hidden subagent scratchpad is never indexed).
+  // Parent row renders with a tree toggle and its child count (two fork
+  // children plus the plain subagent, resolved via the parent's
+  // subagents/<id>/meta.json — all three fold here).
   const parentRow = window.locator(`[data-testid="session-row"][data-session-uuid="${PARENT}"]`)
   await expect(parentRow).toBeVisible({ timeout: 5000 })
   await expect(parentRow.locator('[data-testid="session-tree-toggle"]')).toBeVisible()
-  await expect(parentRow).toContainText(/2/)
+  await expect(parentRow).toContainText(/3/)
 
   // Children start collapsed: hidden from the list.
   const childA = window.locator(`[data-testid="session-row"][data-session-uuid="${CHILD_A}"]`)
   const childB = window.locator(`[data-testid="session-row"][data-session-uuid="${CHILD_B}"]`)
+  const subagent = window.locator(`[data-testid="session-row"][data-session-uuid="${SUBAGENT}"]`)
   await expect(childA).toHaveCount(0)
   await expect(childB).toHaveCount(0)
+  await expect(subagent).toHaveCount(0)
 
-  // The hidden subagent scratchpad never renders, collapsed or not.
-  await expect(window.locator(`[data-testid="session-row"][data-session-uuid="${HIDDEN_SUBAGENT}"]`)).toHaveCount(0)
-
-  // Expand: both children appear, indented beneath the parent.
+  // Expand: all three children appear, indented beneath the parent.
   await parentRow.locator('[data-testid="session-tree-toggle"]').click()
   await expect(childA).toBeVisible()
   await expect(childB).toBeVisible()
+  await expect(subagent).toBeVisible()
   await expect(childA).toHaveAttribute('data-tree-depth', '1')
   await expect(childB).toHaveAttribute('data-tree-depth', '1')
+  await expect(subagent).toHaveAttribute('data-tree-depth', '1')
 
   // Collapse again hides them.
   await parentRow.locator('[data-testid="session-tree-toggle"]').click()
   await expect(childA).toHaveCount(0)
+  await expect(subagent).toHaveCount(0)
 })
 
-test('project view grok child session opens its own detail page', async () => {
+test('project view grok subagent session opens its own detail page', async () => {
   const { window } = ctx
   await waitForSync(window)
   await openTestProject(window)
@@ -71,8 +74,8 @@ test('project view grok child session opens its own detail page', async () => {
   await expect(parentRow).toBeVisible({ timeout: 5000 })
   await parentRow.locator('[data-testid="session-tree-toggle"]').click()
 
-  const childA = window.locator(`[data-testid="session-row"][data-session-uuid="${CHILD_A}"]`)
-  await childA.click()
+  const subagent = window.locator(`[data-testid="session-row"][data-session-uuid="${SUBAGENT}"]`)
+  await subagent.click()
   await expect(window.locator('[data-testid="session-detail"]')).toBeVisible({ timeout: 5000 })
 })
 

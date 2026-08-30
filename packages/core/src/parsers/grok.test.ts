@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parseGrokSession, loadGrokSession, decodeGrokCwdDirname } from './grok.js'
 
@@ -44,6 +44,33 @@ function makeSessionDir(opts: {
   }
 
   return join(sessionDir, 'chat_history.jsonl')
+}
+
+/** Writes a parent session's `subagents/<childId>/meta.json`, mirroring
+ *  grok-build's on-disk layout:
+ *  <sessions_root>/<encoded_cwd>/<parent_id>/subagents/<child_id>/meta.json.
+ *  The parent chat path must already sit one level below a sessions root. */
+function makeSubagentMeta(parentChatPath: string, childId: string): void {
+  const sessionDir = parentChatPath.slice(0, -'/chat_history.jsonl'.length)
+  const metaDir = join(sessionDir, 'subagents', childId)
+  mkdirSync(metaDir, { recursive: true })
+  writeFileSync(join(metaDir, 'meta.json'), JSON.stringify({
+    subagent_id: childId,
+    child_session_id: childId,
+    parent_session_id: basename(sessionDir),
+    description: 'explorer task',
+    status: 'completed',
+  }))
+}
+
+/** Moves a fixture session dir to `<sessionsRoot>/<encoded>/<id>`, so
+ *  subagent fixtures live in their own encoded-cwd dir like real data. */
+function homeUnderSessionsRoot(chatPath: string, sessionsRoot: string): string {
+  const sessionDir = chatPath.slice(0, -'/chat_history.jsonl'.length)
+  const moved = join(sessionsRoot, '%2Ftmp%2Fencoded', basename(sessionDir))
+  mkdirSync(dirname(moved), { recursive: true })
+  renameSync(sessionDir, moved)
+  return join(moved, 'chat_history.jsonl')
 }
 
 describe('parseGrokSession', () => {
@@ -291,12 +318,13 @@ describe('parseGrokSession', () => {
     expect(parseGrokSession(emptyParent)?.parentSessionUuid).toBeNull()
   })
 
-  it('still filters hidden subagent sessions even when parent_session_id is set', () => {
+  it('still filters sessions with an explicit hidden flag', () => {
+    // grok-build currently never writes hidden:true at runtime (verified
+    // across the whole repo), but the override is part of the format.
     const fp = makeSessionDir({
-      summary: { parent_session_id: '01a024b8-530a-7e01-815c-50f9fd631e8f', session_kind: 'subagent', hidden: true },
+      summary: { hidden: true },
       chatHistory: [
-        { type: 'user', content: [{ type: 'text', text: 'task' }] },
-        { type: 'assistant', content: 'Working.' },
+        { type: 'user', content: [{ type: 'text', text: 'test' }] },
       ],
     })
 
@@ -304,9 +332,9 @@ describe('parseGrokSession', () => {
     expect(loadGrokSession(fp).kind).toBe('filtered')
   })
 
-  it('filters subagent scratchpads by session_kind even without an explicit hidden flag', () => {
-    // grok-build's is_hidden(): subagent* kinds default to hidden when
-    // `hidden` is unset — Summary::is_hidden's default.
+  it('keeps subagent sessions indexable despite their hidden-by-kind default', () => {
+    // grok-build's lister hides subagent* kinds when `hidden` is unset;
+    // Spool instead keeps them and folds them under their parent.
     const kinds = ['subagent', 'subagent_fork', 'subagent_resume']
     for (const session_kind of kinds) {
       const fp = makeSessionDir({
@@ -316,8 +344,89 @@ describe('parseGrokSession', () => {
           { type: 'assistant', content: 'Working.' },
         ],
       })
-      expect(loadGrokSession(fp).kind).toBe('filtered')
+      expect(parseGrokSession(fp)).not.toBeNull()
     }
+  })
+
+  it('resolves a plain subagent session parent from the parent subagents meta.json', () => {
+    const PARENT = '019fc5b7-0000-7000-8000-000000000001'
+    const CHILD = '019fc5b7-0000-7000-8000-000000000002'
+    const parentFp = makeSessionDir({
+      sessionId: PARENT,
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'parent work' }] },
+        { type: 'assistant', content: 'Done.' },
+      ],
+    })
+    makeSubagentMeta(parentFp, CHILD)
+
+    const child = makeSessionDir({
+      sessionId: CHILD,
+      summary: { session_kind: 'subagent' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'subagent task' }] },
+        { type: 'assistant', content: 'Task done.' },
+      ],
+    })
+    // Real layout: parent and child live in their own encoded-cwd dirs
+    // under the shared sessions root.
+    const sessionsRoot = dirname(dirname(parentFp))
+    const childFp = homeUnderSessionsRoot(child, sessionsRoot)
+    const parentUnderRoot = homeUnderSessionsRoot(parentFp, sessionsRoot)
+    expect(parentUnderRoot).toBeTruthy()
+
+    const parsed = parseGrokSession(childFp)
+    expect(parsed).not.toBeNull()
+    expect(parsed!.parentSessionUuid).toBe(PARENT)
+    expect(parsed!.sessionUuid).toBe(CHILD)
+  })
+
+  it('treats a subagent session with no resolvable meta as a root', () => {
+    const fp = makeSessionDir({
+      summary: { session_kind: 'subagent' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'lone task' }] },
+        { type: 'assistant', content: 'Done.' },
+      ],
+    })
+    expect(parseGrokSession(fp)?.parentSessionUuid).toBeNull()
+  })
+
+  it('ignores meta.json with empty or missing parent_session_id', () => {
+    const PARENT = '019fc5b7-0000-7000-8000-000000000011'
+    const CHILD = '019fc5b7-0000-7000-8000-000000000012'
+    const parentFp = makeSessionDir({ sessionId: PARENT, chatHistory: [] })
+    const sessionDir = parentFp.slice(0, -'/chat_history.jsonl'.length)
+    const metaDir = join(sessionDir, 'subagents', CHILD)
+    mkdirSync(metaDir, { recursive: true })
+    writeFileSync(join(metaDir, 'meta.json'), JSON.stringify({ child_session_id: CHILD }))
+
+    const child = makeSessionDir({
+      sessionId: CHILD,
+      summary: { session_kind: 'subagent' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'task' }] },
+        { type: 'assistant', content: 'Done.' },
+      ],
+    })
+    const sessionsRoot = dirname(dirname(parentFp))
+    homeUnderSessionsRoot(parentFp, sessionsRoot)
+    const childFp = homeUnderSessionsRoot(child, sessionsRoot)
+
+    expect(parseGrokSession(childFp)?.parentSessionUuid).toBeNull()
+  })
+
+  it('does not scan for subagent meta when the session already has a parent_session_id', () => {
+    // subagent_resume summaries carry the parent directly; the meta walk
+    // would find nothing anyway but must not run.
+    const fp = makeSessionDir({
+      summary: { session_kind: 'subagent_resume', parent_session_id: '01a024b8-530a-7e01-815c-50f9fd631e8f' },
+      chatHistory: [
+        { type: 'user', content: [{ type: 'text', text: 'continue task' }] },
+        { type: 'assistant', content: 'Continued.' },
+      ],
+    })
+    expect(parseGrokSession(fp)?.parentSessionUuid).toBe('01a024b8-530a-7e01-815c-50f9fd631e8f')
   })
 
   it('keeps fork and worktree sessions visible by session_kind', () => {
