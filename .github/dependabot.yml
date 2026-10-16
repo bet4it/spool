@@ -19,14 +19,12 @@ updates:
           - "*"
         exclude-patterns:
           - "@agentclientprotocol/*"
-          - "@anthropic-ai/claude-agent-sdk"
           - "@electron/*"
           - "@tailwindcss/*"
           - "@types/better-sqlite3"
           - "@types/react*"
           - "@vitejs/*"
           - "@void/*"
-          - "acp-extension-*"
           - "better-sqlite3"
           - "bindings"
           - "electron*"
@@ -60,8 +58,6 @@ updates:
         applies-to: version-updates
         patterns:
           - "@agentclientprotocol/*"
-          - "@anthropic-ai/claude-agent-sdk"
-          - "acp-extension-*"
         update-types:
           - patch
           - minor

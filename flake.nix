@@ -20,12 +20,10 @@
             copyDesktopItems
             fetchPnpmDeps
             lib
-            libcap
             libglvnd
             makeDesktopItem
             makeWrapper
             nodejs_22
-            openssl
             patchelf
             pkg-config
             pnpm_10
@@ -34,8 +32,6 @@
             stdenv
             writableTmpDirAsHomeHook
             xdg-terminal-exec
-            xz
-            zlib
             ;
 
           version = packageJson.version;
@@ -185,14 +181,6 @@
 
           runtimePath = lib.makeBinPath [ xdg-terminal-exec ];
           electronRuntimeLibPath = lib.makeLibraryPath [ libglvnd ];
-          acpCodexLibPath = lib.makeLibraryPath [
-            libcap
-            openssl
-            stdenv.cc.cc.lib
-            stdenv.cc.libc
-            xz
-            zlib
-          ];
 
           spool-app = stdenv.mkDerivation {
             pname = "spool-app";
@@ -264,11 +252,6 @@
 
               mkdir -p $out/share/spool
               cp -R packages/app/dist/linux-unpacked/. $out/share/spool/
-
-              patchelf \
-                --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
-                --set-rpath "${acpCodexLibPath}" \
-                $out/share/spool/resources/app/node_modules/acp-extension-codex-linux-x64/bin/acp-extension-codex
 
               makeWrapper "$out/share/spool/@spoolapp" "$out/bin/spool-app" \
                 --add-flags "--no-sandbox" \

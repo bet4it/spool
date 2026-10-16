@@ -42,8 +42,6 @@
     "@spool-lab/redact": "workspace:^",
     "@spool/share-kit": "workspace:*",
     "@tanstack/react-virtual": "^3.13.6",
-    "acp-extension-claude": "^0.21.0",
-    "acp-extension-codex": "^0.10.0",
     "better-sqlite3": "^12.11.1",
     "bindings": "^1.5.0",
     "effect": "^3.21.2",
@@ -92,13 +90,7 @@
       "node_modules/better-sqlite3/**",
       "node_modules/bindings/**",
       "node_modules/file-uri-to-path/**",
-      "node_modules/acp-extension-claude/**",
-      "node_modules/acp-extension-codex/**",
-      "node_modules/acp-extension-codex-darwin-arm64/**",
-      "node_modules/acp-extension-codex-linux-x64/**",
-      "node_modules/acp-extension-core/**",
       "node_modules/@agentclientprotocol/**",
-      "node_modules/@anthropic-ai/claude-agent-sdk/**",
       "node_modules/zod/**"
     ],
     "mac": {
@@ -144,10 +136,6 @@
         }
       ]
     }
-  },
-  "optionalDependencies": {
-    "acp-extension-codex-darwin-arm64": "^0.10.0",
-    "acp-extension-codex-linux-x64": "^0.10.0"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",

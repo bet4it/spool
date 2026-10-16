@@ -69,6 +69,7 @@ export interface AgentsConfig {
     bin: string
     acpMode: AcpMode
     acpArgs?: string[]
+    acpBin?: string[]
     wsEndpoint?: string
     healthCheck?: string
   }>
@@ -85,7 +86,7 @@ interface AcpSession {
  * ACP Manager — connects to local agents via the Agent Client Protocol.
  *
  * Supports three connection modes:
- *   - extension: via acp-extension-{name} npm packages (Claude Code, Codex CLI)
+ *   - extension: via global ACP adapter (claude-agent-acp, codex-acp) or fallback package
  *   - native:    CLI itself is ACP server, spawn `{bin} {acpArgs}` (Gemini, Kimi, OpenCode)
  *   - websocket: HTTP + WebSocket API, non-ACP (Alma)
  */
@@ -120,6 +121,7 @@ interface AgentConfig {
   bin: string
   acpMode: AcpMode
   acpArgs?: string[]          // native mode: args to start ACP server (default: ['acp'])
+  acpBin?: string[]           // extension mode: candidate binary names on PATH (e.g. ['claude-agent-acp', 'acp-extension-claude'])
   wsEndpoint?: string         // websocket mode: WebSocket URL
   healthCheck?: string        // websocket mode: HTTP health check URL
   envSetup?: () => Promise<Record<string, string>>
@@ -130,6 +132,7 @@ const BUILTIN_AGENT_CONFIGS: Record<string, AgentConfig> = {
     name: 'Claude Code',
     bin: 'claude',
     acpMode: 'extension',
+    acpBin: ['claude-agent-acp', 'acp-extension-claude'],
     envSetup: async () => {
       const claudePath = await cachedResolveAsyncPersistent('claude')
       return claudePath ? { CLAUDE_CODE_EXECUTABLE: claudePath } : {}
@@ -139,6 +142,11 @@ const BUILTIN_AGENT_CONFIGS: Record<string, AgentConfig> = {
     name: 'Codex CLI',
     bin: 'codex',
     acpMode: 'extension',
+    acpBin: ['codex-acp', 'acp-extension-codex'],
+    envSetup: async () => {
+      const codexPath = await cachedResolveAsyncPersistent('codex')
+      return codexPath ? { CODEX_PATH: codexPath } : {}
+    },
   },
   gemini: {
     name: 'Gemini CLI',
@@ -233,6 +241,7 @@ function getEffectiveConfigs(): Record<string, AgentConfig> {
           acpMode: def.acpMode,
         }
         if (def.acpArgs) custom.acpArgs = def.acpArgs
+        if (def.acpBin) custom.acpBin = def.acpBin
         if (def.wsEndpoint) custom.wsEndpoint = def.wsEndpoint
         if (def.healthCheck) custom.healthCheck = def.healthCheck
         result[id] = custom
@@ -355,13 +364,15 @@ export class AcpManager {
         env: agentEnv,
       })
     } else {
-      // Extension mode: resolve acp-extension-{name} npm package
-      const { path: agentBin, native } = this.resolveAcpExtension(agentId)
+      // Extension mode: resolve global ACP adapter or fallback package
+      const { path: agentBin, native } = await this.resolveAcpExtension(agentId, config)
 
       if (native) {
+        const isWindowsCmd = process.platform === 'win32' && (agentBin.endsWith('.cmd') || agentBin.endsWith('.bat'))
         proc = spawn(agentBin, [], {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: agentEnv,
+          shell: isWindowsCmd,
         })
       } else {
         const nodePath = await cachedResolveAsyncPersistent('node')
@@ -619,16 +630,31 @@ export class AcpManager {
   }
 
   /**
-   * Resolve the ACP extension entry point for a given agent.
+   * Resolve the ACP adapter entry point for a given agent.
    *
-   * acp-extension-claude is a pure JS package (dist/index.js) → run with Node.
-   * acp-extension-codex is a native binary wrapper → resolve the platform-specific
-   * binary directly (acp-extension-codex-darwin-arm64/bin/acp-extension-codex).
+   * Priority:
+   * 1. Environment variable override: SPOOL_ACP_AGENT_BIN or SPOOL_ACP_<ID>_BIN
+   * 2. Global executable on PATH via config.acpBin (e.g. claude-agent-acp, codex-acp)
+   * 3. Local node_modules fallback (for dev or legacy setups)
    */
-  private resolveAcpExtension(name: string): { path: string; native: boolean } {
-    const override = process.env['SPOOL_ACP_AGENT_BIN']
-    if (override) return { path: override, native: false }
+  private async resolveAcpExtension(name: string, config: AgentConfig): Promise<{ path: string; native: boolean }> {
+    const envKey = `SPOOL_ACP_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_BIN`
+    const override = process.env[envKey] || process.env['SPOOL_ACP_AGENT_BIN']
+    if (override) {
+      const isJs = override.endsWith('.js') || override.endsWith('.mjs')
+      return { path: override, native: !isJs }
+    }
 
+    const candidates = config.acpBin ?? [`${name}-agent-acp`, `${name}-acp`, `acp-extension-${name}`]
+    for (const bin of candidates) {
+      const found = await cachedResolveAsyncPersistent(bin)
+      if (found) {
+        const isJs = found.endsWith('.js') || found.endsWith('.mjs')
+        return { path: found, native: !isJs }
+      }
+    }
+
+    // Fallback: check local node_modules (dev / backward compatibility)
     const pkg = `acp-extension-${name}`
     const roots = [
       resolve(__dirname, '..', '..', 'node_modules'),
@@ -658,7 +684,11 @@ export class AcpManager {
         }
       }
     }
-    throw new Error(`Could not find ${pkg}. Run: pnpm add ${pkg}`)
+    const candidatesStr = candidates.join(', ')
+    throw new Error(
+      `Could not find ACP adapter for ${config.name} (${candidatesStr}). ` +
+      `Ensure an ACP adapter (e.g. ${candidates[0]}) is installed and in PATH.`
+    )
   }
 
   /**
