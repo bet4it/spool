@@ -193,7 +193,7 @@
               pnpmWorkspaces = appPnpmWorkspaces;
               pnpm = pnpm_10;
               fetcherVersion = 3;
-              hash = "sha256-3PyPZ2If/+MwqOX2HbwkZGIujMPyoRoUeo0UbbpVOeY=";
+              hash = "sha256-pIseTAjyHFG9wVDeGyBUQfuJFko45brEcEYvVNoHyiU=";
             };
 
             nativeBuildInputs = [
