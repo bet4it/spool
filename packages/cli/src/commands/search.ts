@@ -62,11 +62,17 @@ function printResult(r: FragmentResult, n: number, total: number): void {
 function buildResumeCommand(r: FragmentResult): string | null {
   switch (r.source) {
     case 'claude':
-      return `claude -r ${r.sessionUuid}`
+      return `claude --dangerously-skip-permissions --resume ${r.sessionUuid}`
     case 'codex':
-      return `codex resume ${r.sessionUuid}`
+      return `codex --dangerously-bypass-approvals-and-sandbox resume ${r.sessionUuid}`
+    case 'gemini':
+      return `gemini --yolo --resume ${r.sessionUuid}`
+    case 'antigravity':
+      return `agy --dangerously-skip-permissions --conversation ${r.sessionUuid}`
+    case 'opencode':
+      return `opencode --auto --session ${r.sessionUuid}`
     case 'grok':
-      return `grok --resume ${r.sessionUuid}`
+      return `grok --permission-mode bypassPermissions --resume ${r.sessionUuid}`
     default:
       return null
   }

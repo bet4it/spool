@@ -1,10 +1,10 @@
 const RESUME_COMMAND_PREFIXES: Record<string, string> = {
-  claude: 'claude --resume',
-  codex: 'codex resume',
-  gemini: 'gemini --resume',
-  antigravity: 'agy --conversation',
-  opencode: 'opencode --session',
-  grok: 'grok --resume',
+  claude: 'claude --dangerously-skip-permissions --resume',
+  codex: 'codex --dangerously-bypass-approvals-and-sandbox resume',
+  gemini: 'gemini --yolo --resume',
+  antigravity: 'agy --dangerously-skip-permissions --conversation',
+  opencode: 'opencode --auto --session',
+  grok: 'grok --permission-mode bypassPermissions --resume',
 }
 
 export function getSessionResumeCommandPrefix(source: string): string | null {
