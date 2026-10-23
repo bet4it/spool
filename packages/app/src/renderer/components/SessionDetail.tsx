@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { SquareTerminal, SquarePen, MoreHorizontal, Copy, ShieldAlert, Check, RotateCcw } from 'lucide-react'
+import { SquareTerminal, SquarePen, MoreHorizontal, Copy, ShieldAlert, Check, RotateCcw, Brain } from 'lucide-react'
 import type { Session, Message } from '@spool-lab/core'
 import { type FindRange } from './MessageBubble.js'
 import MessageList, { type MessageListHandle } from './MessageList.js'
@@ -31,6 +31,21 @@ type Props = {
 // projection re-parses every message's markdown, so it must not run per key.
 const FIND_DEBOUNCE_MS = 120
 
+const SHOW_THINKING_STORAGE_KEY = 'spool:show-thinking-and-tools'
+
+function getInitialShowThinking(): boolean {
+  try {
+    if (typeof window === 'undefined') return true
+    const stored = window.localStorage.getItem(SHOW_THINKING_STORAGE_KEY)
+    if (stored !== null) {
+      return stored === 'true'
+    }
+  } catch {
+    // ignore
+  }
+  return true
+}
+
 export default function SessionDetail({ sessionUuid, targetMessageId, onCopySessionId, onBack, onShare }: Props) {
   const { t } = useTranslation()
   const [session, setSession] = useState<Session | null>(null)
@@ -47,6 +62,19 @@ export default function SessionDetail({ sessionUuid, targetMessageId, onCopySess
   const [commandCopied, setCommandCopied] = useState(false)
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [showThinkingAndTools, setShowThinkingAndTools] = useState<boolean>(getInitialShowThinking)
+
+  const handleToggleThinking = useCallback(() => {
+    setShowThinkingAndTools((prev) => {
+      const next = !prev
+      try {
+        window.localStorage.setItem(SHOW_THINKING_STORAGE_KEY, String(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }, [])
   const [showFindBar, setShowFindBar] = useState(false)
   const [showTargetHighlight, setShowTargetHighlight] = useState(false)
   const [findFocusNonce, setFindFocusNonce] = useState(0)
@@ -395,6 +423,21 @@ export default function SessionDetail({ sessionUuid, targetMessageId, onCopySess
             <SquareTerminal size={13} strokeWidth={1.6} aria-hidden />
           </button>
 
+          <button
+            type="button"
+            data-testid="detail-toggle-thinking"
+            data-active={showThinkingAndTools ? '1' : '0'}
+            aria-pressed={showThinkingAndTools}
+            onClick={handleToggleThinking}
+            title={showThinkingAndTools ? t('session.hideThinkingAndTools') : t('session.showThinkingAndTools')}
+            aria-label={showThinkingAndTools ? t('session.hideThinkingAndTools') : t('session.showThinkingAndTools')}
+            className={`inline-flex items-center justify-center w-5 h-5 rounded text-warm-faint dark:text-dark-muted hover:bg-warm-surface2 dark:hover:bg-dark-surface2 hover:text-warm-text dark:hover:text-dark-text transition-colors focus:outline-none ${
+              !showThinkingAndTools ? 'opacity-40' : ''
+            }`}
+          >
+            <Brain size={13} strokeWidth={1.6} aria-hidden />
+          </button>
+
           <Menu
             align="right"
             testId="detail-actions-menu"
@@ -464,6 +507,7 @@ export default function SessionDetail({ sessionUuid, targetMessageId, onCopySess
         onActiveMatchRef={bindActiveFindMatch}
         targetMessageId={targetMessageId ?? null}
         showTargetHighlight={showTargetHighlight}
+        showThinkingAndTools={showThinkingAndTools}
       />
     </div>
   )

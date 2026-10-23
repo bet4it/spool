@@ -66,6 +66,7 @@ test('session detail shows Pin, action menu (Copy ID + Copy command), Resume', a
   // open, so unscoped pin-button queries match the list rows too.
   await expect(window.locator('[data-testid="session-detail"] [data-testid="pin-button"]')).toBeVisible()
   await expect(window.locator('[data-testid="detail-resume"]')).toBeVisible()
+  await expect(window.locator('[data-testid="detail-toggle-thinking"]')).toBeVisible()
 
   await window.locator('[data-testid="detail-actions-menu"] button').first().click()
   await expect(window.getByRole('menuitem', { name: 'Copy session ID' })).toBeVisible()
@@ -84,6 +85,25 @@ test('pinning from session detail persists', async () => {
   const initialState = await pinButton.getAttribute('data-pinned')
   await pinButton.click()
   await expect(pinButton).toHaveAttribute('data-pinned', initialState === '1' ? '0' : '1', { timeout: 2000 })
+})
+
+test('session detail toggles thinking and tool calls visibility', async () => {
+  const { window } = ctx
+  await waitForSync(window)
+
+  await window.locator('[data-testid="sidebar-project-row"]').first().click()
+  await window.locator('[data-testid="session-row"]').first().click()
+  await expect(window.locator('[data-testid="session-detail"]')).toBeVisible({ timeout: 5000 })
+
+  const toggleBtn = window.locator('[data-testid="detail-toggle-thinking"]')
+  await expect(toggleBtn).toBeVisible()
+  await expect(toggleBtn).toHaveAttribute('data-active', '1')
+
+  await toggleBtn.click()
+  await expect(toggleBtn).toHaveAttribute('data-active', '0')
+
+  await toggleBtn.click()
+  await expect(toggleBtn).toHaveAttribute('data-active', '1')
 })
 
 test('renders markdown: bold, headings, code blocks', async () => {

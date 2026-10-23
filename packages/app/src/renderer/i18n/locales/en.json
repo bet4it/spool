@@ -139,7 +139,9 @@
     "toolInput": "Input",
     "toolResult": "Result",
     "toolFailed": "failed",
-    "toolTruncated": "Truncated for display"
+    "toolTruncated": "Truncated for display",
+    "hideThinkingAndTools": "Hide thinking and tool calls",
+    "showThinkingAndTools": "Show thinking and tool calls"
   },
   "library": {
     "greeting": "Welcome back",

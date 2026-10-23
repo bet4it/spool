@@ -139,7 +139,9 @@
     "toolInput": "Entrée",
     "toolResult": "Résultat",
     "toolFailed": "échec",
-    "toolTruncated": "Tronqué pour l’affichage"
+    "toolTruncated": "Tronqué pour l’affichage",
+    "hideThinkingAndTools": "Masquer le raisonnement et les outils",
+    "showThinkingAndTools": "Afficher le raisonnement et les outils"
   },
   "library": {
     "greeting": "Bon retour",

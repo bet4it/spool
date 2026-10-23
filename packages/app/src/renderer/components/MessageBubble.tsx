@@ -15,6 +15,7 @@ interface Props {
   matchIndexOffset?: number
   activeMatchIndex?: number
   onActiveMatchRef?: ((node: HTMLElement | null) => void) | undefined
+  showThinkingAndTools?: boolean
 }
 
 /** Name-only chips for rows with no structured detail — sessions
@@ -40,6 +41,7 @@ function MessageBubble({
   matchIndexOffset = 0,
   activeMatchIndex = -1,
   onActiveMatchRef,
+  showThinkingAndTools = true,
 }: Props) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
@@ -51,6 +53,8 @@ function MessageBubble({
   const isToolUseOnly =
     message.toolNames.length > 0 && !message.contentText && !thinking && !hasToolDetail
   const contentText = message.contentText || (isSystem ? '(summary)' : '')
+  const showThinking = showThinkingAndTools && Boolean(thinking)
+  const showTools = showThinkingAndTools && (hasToolDetail || message.toolNames.length > 0)
 
   const markdownProps = {
     text: contentText,
@@ -72,6 +76,7 @@ function MessageBubble({
   }
 
   if (isToolUseOnly) {
+    if (!showThinkingAndTools) return null
     return (
       <div className="px-6 py-0.5 flex items-center gap-2">
         {showAvatar ? (
@@ -93,6 +98,10 @@ function MessageBubble({
     )
   }
 
+  if (!contentText.trim() && !showThinking && !showTools) {
+    return null
+  }
+
   return (
     <div className="px-6 py-2">
       <div className="flex items-start gap-2">
@@ -111,10 +120,12 @@ function MessageBubble({
           {/* Reasoning precedes the reply it produced, and the tool
               rows follow it, so the row order matches the order the
               turn actually happened in. */}
-          {thinking && <ThinkingBlock text={thinking} />}
-          {hasToolDetail
-            ? <ToolCallList calls={toolCalls} />
-            : message.toolNames.length > 0 && <ToolNameChips names={message.toolNames} />}
+          {showThinking && <ThinkingBlock text={thinking} />}
+          {showTools && (
+            hasToolDetail
+              ? <ToolCallList calls={toolCalls} />
+              : <ToolNameChips names={message.toolNames} />
+          )}
           {contentText && <MarkdownContent {...markdownProps} />}
           <p className="text-[10px] text-neutral-400 mt-1">{formatTime(message.timestamp)}</p>
         </div>

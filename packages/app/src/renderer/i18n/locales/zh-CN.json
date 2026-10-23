@@ -135,7 +135,9 @@
     "toolInput": "输入",
     "toolResult": "结果",
     "toolFailed": "失败",
-    "toolTruncated": "内容过长，已截断显示"
+    "toolTruncated": "内容过长，已截断显示",
+    "hideThinkingAndTools": "隐藏思考过程与命令调用",
+    "showThinkingAndTools": "显示思考过程与命令调用"
   },
   "library": {
     "greeting": "欢迎回来",

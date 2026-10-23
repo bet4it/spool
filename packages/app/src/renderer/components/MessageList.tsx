@@ -25,6 +25,7 @@ interface Props {
   onActiveMatchRef: (node: HTMLElement | null) => void
   targetMessageId?: number | null
   showTargetHighlight: boolean
+  showThinkingAndTools?: boolean
 }
 
 /** A virtualised row is either an actual message or a day-divider header. */
@@ -168,7 +169,17 @@ function formatRowTime(iso: string, locale: string | undefined): string {
 }
 
 const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
-  { messages, isDark, showFindBar, messageFindRanges, activeMatchIndex, onActiveMatchRef, targetMessageId, showTargetHighlight },
+  {
+    messages,
+    isDark,
+    showFindBar,
+    messageFindRanges,
+    activeMatchIndex,
+    onActiveMatchRef,
+    targetMessageId,
+    showTargetHighlight,
+    showThinkingAndTools = true,
+  },
   ref,
 ) {
   const { t, i18n } = useTranslation()
@@ -183,11 +194,21 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
     setScrollbarSyncNonce((value) => value + 1)
   }, [])
 
+  const visibleMessages = useMemo(() => {
+    if (showThinkingAndTools) return messages
+    return messages.filter((m) => {
+      if (m.contentText.trim().length > 0) return true
+      if (m.role === 'system') return true
+      if (m.isSidechain) return true
+      return false
+    })
+  }, [messages, showThinkingAndTools])
+
   const dividerLabel = useMemo(
     () => makeDividerLabel(t('session.divider_today'), t('session.divider_yesterday'), i18n.language),
     [t, i18n.language],
   )
-  const rows = useMemo(() => buildRows(messages, dividerLabel), [messages, dividerLabel])
+  const rows = useMemo(() => buildRows(visibleMessages, dividerLabel), [visibleMessages, dividerLabel])
 
   // Maps a message id to its row index. Row indices include day dividers,
   // so this is the only correct way to translate "scroll to message X" into
@@ -237,7 +258,7 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
     handle.scrollToIndex({ index, align: 'start', behavior: 'auto' })
   }, [rowCount])
 
-  if (messages.length === 0) {
+  if (visibleMessages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-warm-faint dark:text-dark-muted">
         <p className="text-sm">No messages to display.</p>
@@ -322,6 +343,7 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
                       {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
                       activeMatchIndex={containsActive ? activeMatchIndex : -1}
                       {...(containsActive ? { onActiveMatchRef } : {})}
+                      showThinkingAndTools={showThinkingAndTools}
                     />
                   </div>
                 )
@@ -355,6 +377,7 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
           {...(matchState ? { findRanges: matchState.ranges, matchIndexOffset: matchState.offset } : {})}
           activeMatchIndex={containsActive ? activeMatchIndex : -1}
           {...(containsActive ? { onActiveMatchRef } : {})}
+          showThinkingAndTools={showThinkingAndTools}
         />
       </div>
     )

@@ -135,7 +135,9 @@
     "toolInput": "入力",
     "toolResult": "結果",
     "toolFailed": "失敗",
-    "toolTruncated": "表示のため省略されました"
+    "toolTruncated": "表示のため省略されました",
+    "hideThinkingAndTools": "思考プロセスとツール実行を非表示",
+    "showThinkingAndTools": "思考プロセスとツール実行を表示"
   },
   "library": {
     "greeting": "おかえりなさい",

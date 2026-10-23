@@ -139,7 +139,9 @@
     "toolInput": "Eingabe",
     "toolResult": "Ergebnis",
     "toolFailed": "fehlgeschlagen",
-    "toolTruncated": "Für die Anzeige gekürzt"
+    "toolTruncated": "Für die Anzeige gekürzt",
+    "hideThinkingAndTools": "Denkprozess und Tool-Aufrufe ausblenden",
+    "showThinkingAndTools": "Denkprozess und Tool-Aufrufe einblenden"
   },
   "library": {
     "greeting": "Willkommen zurück",

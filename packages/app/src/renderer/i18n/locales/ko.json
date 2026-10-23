@@ -135,7 +135,9 @@
     "toolInput": "입력",
     "toolResult": "결과",
     "toolFailed": "실패",
-    "toolTruncated": "표시를 위해 잘렸습니다"
+    "toolTruncated": "표시를 위해 잘렸습니다",
+    "hideThinkingAndTools": "사고 과정 및 도구 호출 숨기기",
+    "showThinkingAndTools": "사고 과정 및 도구 호출 표시"
   },
   "library": {
     "greeting": "환영합니다",
