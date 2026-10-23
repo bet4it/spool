@@ -4,11 +4,17 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { Message } from '@spool-lab/core'
 import MessageBubble, { type FindRange } from './MessageBubble.js'
+import {
+  TimelineMinimap,
+  buildTurnOutline,
+  activeTurnIndex,
+  getTopVisibleRowIndex,
+} from './TimelineMinimap.js'
 
 type DividerLabel = (iso: string, now: Date) => string
 
 export interface MessageListHandle {
-  scrollToMessageId: (id: number) => void
+  scrollToMessageId: (id: number, align?: 'start' | 'center') => void
 }
 
 interface MatchState {
@@ -187,11 +193,67 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
   const [expandedSidechains, setExpandedSidechains] = useState<Set<string>>(() => new Set())
   const [virtuosoScroller, setVirtuosoScroller] = useState<HTMLElement | null>(null)
   const [scrollbarSyncNonce, setScrollbarSyncNonce] = useState(0)
+  const [visibleRowIndex, setVisibleRowIndex] = useState(0)
+  const [activeTurnOverride, setActiveTurnOverride] = useState<number | null>(null)
+  const overrideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const [isAtBottom, setIsAtBottom] = useState(false)
+  const [activeJumpId, setActiveJumpId] = useState<number | null>(null)
   const bindVirtuosoScroller = useCallback((ref: HTMLElement | Window | null) => {
     setVirtuosoScroller(ref instanceof HTMLElement ? ref : null)
   }, [])
   const requestScrollbarSync = useCallback(() => {
     setScrollbarSyncNonce((value) => value + 1)
+  }, [])
+
+  useEffect(() => {
+    const scroller = virtuosoScroller
+    if (!scroller) return
+
+    let rafId = 0
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    let lastHitTest = 0
+
+    const sample = () => {
+      const topIdx = getTopVisibleRowIndex(scroller)
+      if (topIdx !== null) {
+        if (topIdx === Number.POSITIVE_INFINITY) {
+          setIsAtBottom(true)
+        } else {
+          setIsAtBottom(false)
+          setVisibleRowIndex(topIdx)
+        }
+      }
+    }
+
+    const onScroll = () => {
+      if (rafId) return
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          sample()
+        }, 120)
+
+        const now = performance.now()
+        if (now - lastHitTest < 80) return
+        lastHitTest = now
+        sample()
+      })
+    }
+
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+      cancelAnimationFrame(rafId)
+      clearTimeout(idleTimer)
+    }
+  }, [virtuosoScroller])
+
+  useEffect(() => () => {
+    if (overrideTimerRef.current) {
+      clearTimeout(overrideTimerRef.current)
+    }
   }, [])
 
   const visibleMessages = useMemo(() => {
@@ -238,12 +300,50 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
   }, [])
 
   useImperativeHandle(ref, () => ({
-    scrollToMessageId(id) {
+    scrollToMessageId(id, align = 'center') {
       const idx = idToRowIndex.get(id)
       if (idx == null) return
-      virtuosoRef.current?.scrollIntoView({ index: idx, align: 'center', behavior: 'auto' })
+      if (align === 'start') {
+        virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', behavior: 'auto' })
+      } else {
+        virtuosoRef.current?.scrollIntoView({ index: idx, align: 'center', behavior: 'auto' })
+      }
     },
   }), [idToRowIndex])
+
+  const turnOutline = useMemo(
+    () => buildTurnOutline(visibleMessages, idToRowIndex),
+    [visibleMessages, idToRowIndex],
+  )
+
+  const computedActiveTurn = useMemo(
+    () => activeTurnIndex(turnOutline, visibleRowIndex, isAtBottom),
+    [turnOutline, visibleRowIndex, isAtBottom],
+  )
+  const activeTurn = activeTurnOverride ?? computedActiveTurn
+
+  const handleRevealTurnMessage = useCallback((messageId: number, turnIndex?: number) => {
+    if (typeof turnIndex === 'number') {
+      setActiveTurnOverride(turnIndex)
+      if (overrideTimerRef.current) clearTimeout(overrideTimerRef.current)
+      overrideTimerRef.current = setTimeout(() => {
+        setActiveTurnOverride(null)
+      }, 1000)
+    }
+    const idx = idToRowIndex.get(messageId)
+    if (idx == null) return
+    virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', behavior: 'auto' })
+    setActiveJumpId(messageId)
+    const timer = setTimeout(() => {
+      setActiveJumpId((current) => current === messageId ? null : current)
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [idToRowIndex])
+
+  const handleWheelScroll = useCallback((deltaY: number) => {
+    setActiveTurnOverride(null)
+    virtuosoScroller?.scrollBy({ top: deltaY })
+  }, [virtuosoScroller])
 
   // Custom scrollbar maps thumb position → row index → Virtuoso scrollToIndex.
   // We can't use scrollTop directly because Virtuoso estimates scrollHeight
@@ -251,6 +351,7 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
   // so a pixel-ratio map can't reach the actual top/bottom until rows measure.
   const rowCount = rows.length
   const scrollToRatio = useCallback((ratio: number) => {
+    setActiveTurnOverride(null)
     const handle = virtuosoRef.current
     if (!handle || rowCount === 0) return
     const clamped = Math.max(0, Math.min(1, ratio))
@@ -325,15 +426,17 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
                   && activeMatchIndex >= matchState.offset
                   && activeMatchIndex < matchState.offset + matchState.ranges.length
                 const isTarget = message.id === targetMessageId
+                const isJump = message.id === activeJumpId
+                const shouldHighlight = (isTarget && showTargetHighlight) || isJump
 
                 return (
                   <div
                     key={message.id}
                     data-message-id={message.id}
-                    {...(isTarget ? { 'data-testid': 'target-message' } : {})}
-                    {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
+                    {...(isTarget || isJump ? { 'data-testid': 'target-message' } : {})}
+                    {...(shouldHighlight ? { 'data-highlighted': '1' } : {})}
                     className={`transition-colors duration-700 ${
-                      isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
+                      shouldHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
                     }`}
                   >
                     <MessageBubble
@@ -359,15 +462,17 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
       && activeMatchIndex >= matchState.offset
       && activeMatchIndex < matchState.offset + matchState.ranges.length
     const isTarget = msg.id === targetMessageId
+    const isJump = msg.id === activeJumpId
+    const shouldHighlight = (isTarget && showTargetHighlight) || isJump
 
     return (
       <div
         data-index={index}
         data-message-id={msg.id}
-        {...(isTarget ? { 'data-testid': 'target-message' } : {})}
-        {...(isTarget && showTargetHighlight ? { 'data-highlighted': '1' } : {})}
+        {...(isTarget || isJump ? { 'data-testid': 'target-message' } : {})}
+        {...(shouldHighlight ? { 'data-highlighted': '1' } : {})}
         className={`transition-colors duration-700 ${
-          isTarget && showTargetHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
+          shouldHighlight ? 'bg-accent/10 dark:bg-accent-dark/10' : ''
         }`}
       >
         <MessageBubble
@@ -384,7 +489,7 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
   }
 
   return (
-    <div className="relative flex-1 min-h-0">
+    <div className="relative flex-1 min-h-0" data-testid="message-list-container">
       <Virtuoso
         ref={virtuosoRef}
         scrollerRef={bindVirtuosoScroller}
@@ -394,9 +499,18 @@ const MessageList = forwardRef<MessageListHandle, Props>(function MessageList(
         {...(initialIndex ? { initialTopMostItemIndex: initialIndex } : {})}
         increaseViewportBy={400}
         totalListHeightChanged={requestScrollbarSync}
+        isScrolling={setIsScrolling}
+        atBottomStateChange={setIsAtBottom}
         data-testid="message-list-scroll"
         className="h-full scrollbar-none [mask-image:linear-gradient(to_bottom,black_calc(100%_-_24px),transparent)]"
         itemContent={renderRowContent}
+      />
+      <TimelineMinimap
+        outline={turnOutline}
+        activeIndex={activeTurn}
+        scrolling={isScrolling}
+        onWheelScroll={handleWheelScroll}
+        onRevealMessage={handleRevealTurnMessage}
       />
       <MessageScrollbar
         scroller={virtuosoScroller}

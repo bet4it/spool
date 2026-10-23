@@ -106,6 +106,32 @@ test('session detail toggles thinking and tool calls visibility', async () => {
   await expect(toggleBtn).toHaveAttribute('data-active', '1')
 })
 
+test('session detail renders navigation minimap and reveals question on click', async () => {
+  const { window } = ctx
+  await waitForSync(window)
+
+  await window.locator('[data-testid="sidebar-project-row"]').first().click()
+  await window
+    .locator('[data-testid="session-row"][data-session-uuid="test-session-uuid-001"]')
+    .click()
+  await expect(window.locator('[data-testid="session-detail"]')).toBeVisible({ timeout: 5000 })
+
+  const minimap = window.locator('[data-testid="timeline-minimap"]')
+  await expect(minimap).toBeVisible()
+
+  const rows = minimap.locator('[data-testid="timeline-minimap-row"]')
+  await expect(rows).toHaveCount(2)
+
+  // Hover over the second tick to see the preview card
+  await rows.nth(1).hover()
+  const card = window.locator('[data-testid="timeline-minimap-card"]')
+  await expect(card).toBeVisible()
+  await expect(card).toContainText('XYLOPHONE_CANARY_42')
+
+  // Click the row/card to jump
+  await rows.nth(1).locator('button').first().click()
+})
+
 test('renders markdown: bold, headings, code blocks', async () => {
   const { window } = ctx
   await waitForSync(window)
