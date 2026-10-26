@@ -794,7 +794,13 @@ function recreateProjectGroupsView(db: Database.Database): void {
       MAX(s.started_at)               AS last_session_at
     FROM projects p
     JOIN sources src ON src.id = p.source_id
-    LEFT JOIN sessions s ON s.project_id = p.id AND s.message_count > 0
+    LEFT JOIN sessions s ON s.project_id = p.id
+      AND s.message_count > 0
+      AND (s.parent_session_uuid IS NULL OR s.parent_session_uuid = '' OR NOT EXISTS (
+        SELECT 1 FROM sessions parent
+        WHERE parent.session_uuid = s.parent_session_uuid
+          AND parent.message_count > 0
+      ))
     WHERE p.identity_kind IS NOT NULL
     GROUP BY p.identity_kind, p.identity_key;
   `)

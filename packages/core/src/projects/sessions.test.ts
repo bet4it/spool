@@ -368,4 +368,14 @@ describe('listProjectDirectoryCounts', () => {
     const counts = listProjectDirectoryCounts(db, 'github.com/spool-lab/spool', { sources: ['codex'] })
     expect(counts).toEqual([])
   })
+
+  it('skips child sessions when counting per-cwd sessions', () => {
+    db.exec(`
+      INSERT INTO sessions (project_id, source_id, session_uuid, parent_session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime, cwd)
+      VALUES
+        (1,1,'child-core','c','child-core','2026-05-03T00:01:00Z','2026-05-03T00:01:00Z',1,0,'2026-05-03T00:01:00Z','/r/pkg/core');
+    `)
+    const counts = listProjectDirectoryCounts(db, 'github.com/spool-lab/spool')
+    expect(counts.find(c => c.cwd === '/r/pkg/core')?.sessionCount).toBe(1)
+  })
 })

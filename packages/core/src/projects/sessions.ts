@@ -153,7 +153,15 @@ export function listProjectDirectoryCounts(
   options: { sources?: SessionSource[] } = {},
 ): DirectoryCount[] {
   const { sources } = options
-  const conditions: string[] = ['p.identity_key = ?', 's.message_count > 0']
+  const conditions: string[] = [
+    'p.identity_key = ?',
+    's.message_count > 0',
+    `(s.parent_session_uuid IS NULL OR s.parent_session_uuid = '' OR NOT EXISTS (
+      SELECT 1 FROM sessions parent
+      WHERE parent.session_uuid = s.parent_session_uuid
+        AND parent.message_count > 0
+    ))`,
+  ]
   const params: unknown[] = [identityKey]
   if (sources && sources.length > 0) {
     const placeholders = sources.map(() => '?').join(',')

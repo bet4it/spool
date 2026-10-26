@@ -96,4 +96,20 @@ describe('listProjectGroups', () => {
     const groups = listProjectGroups(db)
     expect(groups.map(g => g.identityKind)).toEqual(['path', 'path', 'loose'])
   })
+
+  it('counts only top-level root sessions, ignoring child sessions', () => {
+    db.exec(`
+      INSERT INTO projects (source_id, slug, display_path, display_name, identity_kind, identity_key)
+      VALUES (1,'spool','/Users/chen/Code/spool','spool','git_remote','github.com/spool-lab/spool');
+      INSERT INTO sessions (project_id, source_id, session_uuid, parent_session_uuid, file_path, title, started_at, ended_at, message_count, has_tool_use, raw_file_mtime)
+      VALUES
+        (1,1,'root-1',NULL,    '/p1','root 1','2026-04-28T10:00:00Z','2026-04-28T10:30:00Z',5,0,'2026-04-28T10:30:00Z'),
+        (1,1,'root-2','',      '/p2','root 2','2026-04-28T10:00:00Z','2026-04-28T10:30:00Z',3,0,'2026-04-28T10:30:00Z'),
+        (1,1,'child-1','root-1','/p3','child 1','2026-04-28T10:05:00Z','2026-04-28T10:20:00Z',2,0,'2026-04-28T10:20:00Z'),
+        (1,1,'child-2','root-1','/p4','child 2','2026-04-28T10:10:00Z','2026-04-28T10:25:00Z',1,0,'2026-04-28T10:25:00Z');
+    `)
+    const groups = listProjectGroups(db)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.sessionCount).toBe(2)
+  })
 })
