@@ -153,7 +153,7 @@
     "bucket_earlierWeek": "今週",
     "bucket_earlierMonth": "今月",
     "bucket_older": "それ以前",
-    "childSessions_other": "{{count}} untergeordnete Sitzungen",
+    "childSessions_other": "{{count}} 件のサブセッション",
     "sortAriaLabel": "セッションを並べ替え",
     "sort_startedAt": "開始時刻",
     "sort_endedAt": "最後のメッセージ",

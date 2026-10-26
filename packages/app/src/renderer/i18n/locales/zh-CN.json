@@ -153,7 +153,7 @@
     "bucket_earlierWeek": "本周早些时候",
     "bucket_earlierMonth": "本月早些时候",
     "bucket_older": "更早",
-    "childSessions_other": "{{count}} untergeordnete Sitzungen",
+    "childSessions_other": "{{count}} 个子会话",
     "sortAriaLabel": "会话排序",
     "sort_startedAt": "按开始时间",
     "sort_endedAt": "按最后消息",

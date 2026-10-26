@@ -153,7 +153,7 @@
     "bucket_earlierWeek": "이번 주 초",
     "bucket_earlierMonth": "이번 달 초",
     "bucket_older": "이전",
-    "childSessions_other": "{{count}} untergeordnete Sitzungen",
+    "childSessions_other": "{{count}}개의 하위 세션",
     "sortAriaLabel": "세션 정렬",
     "sort_startedAt": "시작 시간",
     "sort_endedAt": "마지막 메시지",
