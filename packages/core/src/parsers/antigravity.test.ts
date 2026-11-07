@@ -337,4 +337,97 @@ describe('parseAntigravitySession', () => {
     expect(tc.result).not.toContain('Created At:')
     expect(tc.result).not.toContain('Completed At:')
   })
+
+  it('prefers transcript_full.jsonl when present to avoid truncated content', () => {
+    const cliRoot = makeAntigravityHome()
+    const convId = '33333333-4444-5555-8666-777777777777'
+    writeHistoryJsonl(cliRoot, convId)
+    const logsDir = join(cliRoot, 'brain', convId, '.system_generated', 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    vi.stubEnv('ANTIGRAVITY_CLI_HOME', cliRoot)
+
+    const compactPath = join(logsDir, 'transcript.jsonl')
+    const fullPath = join(logsDir, 'transcript_full.jsonl')
+
+    writeFileSync(compactPath, makeTranscript([
+      {
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:00Z',
+        content: '<USER_REQUEST>\nExplain shadow memory\n</USER_REQUEST>',
+      },
+      {
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:10Z',
+        content: 'Shadow memory is <truncated 200 bytes> finished.',
+        truncated_fields: ['content'],
+      },
+    ]))
+
+    writeFileSync(fullPath, makeTranscript([
+      {
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:00Z',
+        content: '<USER_REQUEST>\nExplain shadow memory\n</USER_REQUEST>',
+      },
+      {
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:10Z',
+        content: 'Shadow memory is full untruncated explanation that was previously clipped by compact logging finished.',
+      },
+    ]))
+
+    const parsed = parseAntigravitySession(compactPath)
+    expect(parsed?.filePath).toBe(compactPath)
+    expect(parsed?.messages).toHaveLength(2)
+    expect(parsed?.messages[1]?.contentText).toBe(
+      'Shadow memory is full untruncated explanation that was previously clipped by compact logging finished.',
+    )
+    expect(parsed?.messages[1]?.contentText).not.toContain('<truncated')
+  })
+
+  it('falls back to transcript.jsonl when transcript_full.jsonl does not exist', () => {
+    const cliRoot = makeAntigravityHome()
+    const convId = '44444444-5555-6666-8777-888888888888'
+    writeHistoryJsonl(cliRoot, convId)
+    const logsDir = join(cliRoot, 'brain', convId, '.system_generated', 'logs')
+    mkdirSync(logsDir, { recursive: true })
+    vi.stubEnv('ANTIGRAVITY_CLI_HOME', cliRoot)
+
+    const compactPath = join(logsDir, 'transcript.jsonl')
+    writeFileSync(compactPath, makeTranscript([
+      {
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:00Z',
+        content: '<USER_REQUEST>\nLegacy session\n</USER_REQUEST>',
+      },
+      {
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: '2026-06-01T00:00:10Z',
+        content: 'Original response from legacy session.',
+      },
+    ]))
+
+    const parsed = parseAntigravitySession(compactPath)
+    expect(parsed?.filePath).toBe(compactPath)
+    expect(parsed?.messages).toHaveLength(2)
+    expect(parsed?.messages[1]?.contentText).toBe('Original response from legacy session.')
+  })
 })

@@ -1,10 +1,10 @@
 import { readFileSync, existsSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ParseSessionResult, ParsedMessage, ParsedSession } from '../types.js'
 import { limitToolCalls, makeToolCall, normalizeThinking } from './tool-calls.js'
 
-export const ANTIGRAVITY_INDEX_VERSION = 'antigravity-v4-ask-question'
+export const ANTIGRAVITY_INDEX_VERSION = 'antigravity-v5-full-transcript'
 
 interface AntigravityStep {
   step_index: number
@@ -152,6 +152,7 @@ function getHistoryConversationCwds(): Map<string, string> {
 
 function extractConversationId(filePath: string): string {
   // .../brain/<conversation-id>/.system_generated/logs/transcript.jsonl
+  // .../brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl
   const parts = filePath.split('/')
   const logsIdx = parts.lastIndexOf('logs')
   if (logsIdx >= 3) {
@@ -160,8 +161,30 @@ function extractConversationId(filePath: string): string {
   return ''
 }
 
+/**
+ * Prefer the untruncated transcript_full.jsonl if it exists alongside
+ * transcript.jsonl.
+ *
+ * Antigravity CLI emits two logs per session: a compact transcript.jsonl
+ * (where large responses and tool outputs are truncated with <truncated N bytes>
+ * to fit model context windows) and an untruncated transcript_full.jsonl.
+ * Both files share identical structure and 1:1 line correspondence.
+ * For reading full human conversations, we prefer transcript_full.jsonl and
+ * fall back to transcript.jsonl when transcript_full.jsonl does not exist.
+ */
+function resolveTranscriptPath(filePath: string): string {
+  if (basename(filePath) === 'transcript.jsonl') {
+    const fullPath = join(dirname(filePath), 'transcript_full.jsonl')
+    if (existsSync(fullPath)) {
+      return fullPath
+    }
+  }
+  return filePath
+}
+
 export function loadAntigravitySession(filePath: string): ParseSessionResult {
-  const raw = readFileSync(filePath, 'utf8')
+  const fileToRead = resolveTranscriptPath(filePath)
+  const raw = readFileSync(fileToRead, 'utf8')
   const lines = raw.split('\n').filter(l => l.trim().length > 0)
   const messages: ParsedMessage[] = []
   let model = ''
