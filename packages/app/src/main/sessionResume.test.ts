@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { resolveResumeWorkingDirectory } from './sessionResume.js'
 
 function makeTempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  const base = tmpdir().includes('-') ? '/tmp' : tmpdir()
+  return mkdtempSync(join(base, prefix))
 }
 
 describe('resolveResumeWorkingDirectory', () => {

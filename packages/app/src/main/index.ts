@@ -1086,7 +1086,7 @@ ipcMain.handle(
       const buf = await printWin.webContents.printToPDF({
         printBackground: true,
         pageSize: 'A4',
-        margins: { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 },
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
       })
       return new Uint8Array(buf)
     } finally {

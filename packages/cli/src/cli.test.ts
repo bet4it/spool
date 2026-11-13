@@ -17,7 +17,9 @@ const ISOLATED_ENV = {
   SPOOL_CLAUDE_DIR: '/nonexistent/claude',
   SPOOL_CODEX_DIR: '/nonexistent/codex',
   SPOOL_GEMINI_DIR: '/nonexistent/gemini',
+  SPOOL_ANTIGRAVITY_DIR: '/nonexistent/antigravity',
   SPOOL_OPENCODE_DIR: '/nonexistent/opencode',
+  SPOOL_GROK_DIR: '/nonexistent/grok',
 }
 
 function run(args: string[], env?: Record<string, string>): string {
