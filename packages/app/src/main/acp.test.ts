@@ -1,5 +1,9 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AcpManager } from './acp.js'
+import { clearBinaryCacheEntry } from './binaryCache.js'
 
 describe('AcpManager builtin agents', () => {
   it('includes Gemini CLI as a native ACP agent', () => {
@@ -68,30 +72,56 @@ describe('AcpManager builtin agents', () => {
   })
 
   it('resolves globally installed claude-agent-acp on PATH', async () => {
-    const manager = new AcpManager()
-    const res = await (manager as unknown as {
-      resolveAcpExtension: (name: string, config: unknown) => Promise<{ path: string; native: boolean }>
-    }).resolveAcpExtension('claude', {
-      name: 'Claude Code',
-      bin: 'claude',
-      acpMode: 'extension',
-      acpBin: ['claude-agent-acp', 'acp-extension-claude'],
-    })
-    expect(res.path).toContain('claude-agent-acp')
-    expect(res.native).toBe(true)
+    const tmp = mkdtempSync(join(tmpdir(), 'acp-test-'))
+    const binPath = join(tmp, 'claude-agent-acp')
+    writeFileSync(binPath, '#!/bin/sh\nexit 0', { mode: 0o755 })
+    chmodSync(binPath, 0o755)
+    clearBinaryCacheEntry('claude-agent-acp')
+    const prevPath = process.env['PATH']
+    process.env['PATH'] = `${tmp}:${prevPath ?? ''}`
+    try {
+      const manager = new AcpManager()
+      const res = await (manager as unknown as {
+        resolveAcpExtension: (name: string, config: unknown) => Promise<{ path: string; native: boolean }>
+      }).resolveAcpExtension('claude', {
+        name: 'Claude Code',
+        bin: 'claude',
+        acpMode: 'extension',
+        acpBin: ['claude-agent-acp', 'acp-extension-claude'],
+      })
+      expect(res.path).toContain('claude-agent-acp')
+      expect(res.native).toBe(true)
+    } finally {
+      process.env['PATH'] = prevPath
+      clearBinaryCacheEntry('claude-agent-acp')
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 
   it('resolves globally installed codex-acp on PATH', async () => {
-    const manager = new AcpManager()
-    const res = await (manager as unknown as {
-      resolveAcpExtension: (name: string, config: unknown) => Promise<{ path: string; native: boolean }>
-    }).resolveAcpExtension('codex', {
-      name: 'Codex CLI',
-      bin: 'codex',
-      acpMode: 'extension',
-      acpBin: ['codex-acp', 'acp-extension-codex'],
-    })
-    expect(res.path).toContain('codex-acp')
-    expect(res.native).toBe(true)
+    const tmp = mkdtempSync(join(tmpdir(), 'acp-test-'))
+    const binPath = join(tmp, 'codex-acp')
+    writeFileSync(binPath, '#!/bin/sh\nexit 0', { mode: 0o755 })
+    chmodSync(binPath, 0o755)
+    clearBinaryCacheEntry('codex-acp')
+    const prevPath = process.env['PATH']
+    process.env['PATH'] = `${tmp}:${prevPath ?? ''}`
+    try {
+      const manager = new AcpManager()
+      const res = await (manager as unknown as {
+        resolveAcpExtension: (name: string, config: unknown) => Promise<{ path: string; native: boolean }>
+      }).resolveAcpExtension('codex', {
+        name: 'Codex CLI',
+        bin: 'codex',
+        acpMode: 'extension',
+        acpBin: ['codex-acp', 'acp-extension-codex'],
+      })
+      expect(res.path).toContain('codex-acp')
+      expect(res.native).toBe(true)
+    } finally {
+      process.env['PATH'] = prevPath
+      clearBinaryCacheEntry('codex-acp')
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })

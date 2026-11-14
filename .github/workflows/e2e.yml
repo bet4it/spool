@@ -58,7 +58,9 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @spool/app exec install-electron
 
       - name: Run E2E tests (Linux)
         if: runner.os == 'Linux'

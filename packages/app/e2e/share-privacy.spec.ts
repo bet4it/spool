@@ -121,6 +121,7 @@ async function withSensitiveDraft(
   testTitle: string,
   body: (window: Page, title: string) => Promise<void>,
 ): Promise<void> {
+  await waitForSync(ctx.window)
   const draftTitle = `Privacy e2e — ${testTitle}`
   await seedSensitiveDraft(ctx.window, draftTitle)
   try {
@@ -133,6 +134,7 @@ async function withSensitiveDraft(
 
 test.beforeAll(async () => {
   ctx = await launchApp()
+  await waitForSync(ctx.window)
 })
 
 test.afterAll(async () => {
@@ -365,6 +367,7 @@ test('redactExclude persists through draft autosave and reload', async () => {
 })
 
 test('No sensitive data → empty state', async () => {
+  await waitForSync(ctx.window)
   const draftTitle = 'Privacy e2e — clean'
   await seedShareDraft(ctx.window, {
     title: draftTitle,

@@ -159,6 +159,10 @@ export async function seedShareDraft(
     opts?: Record<string, unknown>
   } = {},
 ): Promise<string> {
+  await window.waitForLoadState('domcontentloaded')
+  await window.waitForFunction(
+    () => typeof (window as unknown as { spool?: { shareDraft?: unknown } }).spool?.shareDraft !== 'undefined',
+  )
   return window.evaluate(async (payload) => {
     const draftId = `e2e-draft-${Math.random().toString(36).slice(2, 10)}`
     const convo = payload.conversation ?? {

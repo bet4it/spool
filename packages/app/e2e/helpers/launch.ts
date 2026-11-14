@@ -106,6 +106,7 @@ export async function launchApp(opts: {
   const app = await electron.launch({ args, cwd: APP_DIR, env })
 
   const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
 
   return {
     app,
@@ -133,6 +134,7 @@ export async function restartApp(ctx: AppContext): Promise<AppContext> {
   args.unshift('--force-prefers-reduced-motion')
   const app = await electron.launch({ args, cwd: APP_DIR, env: ctx.env })
   const window = await app.firstWindow()
+  await window.waitForLoadState('domcontentloaded')
   return {
     app,
     window,

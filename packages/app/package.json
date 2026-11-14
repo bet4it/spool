@@ -28,7 +28,7 @@
     "test": "vitest run",
     "rebuild:native:node": "node ../../scripts/rebuild-better-sqlite3-node.mjs",
     "test:e2e": "node ../../scripts/with-electron-native.mjs pnpm run test:e2e:raw",
-    "test:e2e:raw": "pnpm run build:deps && SPOOL_E2E_TEST=1 VITE_FEATURE_SHAREPUBLISH=1 electron-vite build && playwright test --config e2e/playwright.config.ts"
+    "test:e2e:raw": "pnpm exec install-electron && pnpm run build:deps && SPOOL_E2E_TEST=1 VITE_FEATURE_SHAREPUBLISH=1 electron-vite build && playwright test --config e2e/playwright.config.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
@@ -69,6 +69,7 @@
   "build": {
     "appId": "com.linkclaw.spool",
     "productName": "Spool",
+    "executableName": "spool",
     "npmRebuild": false,
     "publish": [
       {
